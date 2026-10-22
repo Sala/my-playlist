@@ -11,6 +11,7 @@ from typing import Any, Optional
 
 import yt_dlp
 
+from app import spotify
 from app.models import (
     Candidate,
     DownloadItem,
@@ -144,10 +145,14 @@ def search_queries(
 
 
 def fetch_playlist(url: str, cookiefile: Optional[str] = None) -> PlaylistResponse:
+    cleaned = (url or "").strip()
+    if spotify.is_spotify_playlist_url(cleaned) or spotify.looks_like_spotify_host(cleaned):
+        return spotify.fetch_public_playlist(cleaned)
+
     ydl_opts = _ydl_base_opts(cookiefile=cookiefile, skip_download=True)
     ydl_opts["extract_flat"] = "in_playlist"
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        data = ydl.extract_info(url, download=False)
+        data = ydl.extract_info(cleaned, download=False)
 
     if not data:
         raise ValueError("Could not load playlist")
@@ -179,6 +184,31 @@ def fetch_playlist(url: str, cookiefile: Optional[str] = None) -> PlaylistRespon
         )
 
     return PlaylistResponse(title=title, entries=entries)
+
+
+def _search_query_for_item(item: JobItemStatus) -> Optional[str]:
+    title = (item.title or "").strip()
+    url = (item.url or "").strip()
+    if url.lower().startswith("ytsearch1:"):
+        q = url.split(":", 1)[1].strip()
+        if q:
+            return q
+    if title:
+        return title
+    return None
+
+
+def _fallback_search_url(item: JobItemStatus) -> Optional[str]:
+    query = _search_query_for_item(item)
+    if not query:
+        return None
+    primary = (item.url or "").strip()
+    candidate = f"ytsearch1:{query}"
+    if primary.lower() == candidate.lower():
+        return None
+    if primary.lower().startswith("ytsearch1:") and primary.split(":", 1)[1].strip().lower() == query.lower():
+        return None
+    return candidate
 
 
 def _output_template(subdir: Optional[str], filename_template: str) -> str:
@@ -255,12 +285,15 @@ def _download_one(
         }
     )
 
-    try:
+    def _run_extract(source: str) -> tuple[Optional[str], Optional[str]]:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(item.url, download=True)
+            info = ydl.extract_info(source, download=True)
             filename = None
             title = None
             if info:
+                # ytsearch results may nest the real entry
+                if info.get("_type") == "playlist" and info.get("entries"):
+                    info = next((e for e in info["entries"] if e), info)
                 prepared = ydl.prepare_filename(info)
                 path = Path(prepared)
                 mp3_path = path.with_suffix(".mp3")
@@ -271,16 +304,48 @@ def _download_one(
                 else:
                     filename = str(mp3_path)
                 title = info.get("title")
+            return filename, title
+
+    primary_error: Optional[str] = None
+    try:
+        filename, title = _run_extract(item.url)
         with _jobs_lock:
             item.status = ItemStatus.done
             item.progress = 100.0
             item.filename = filename
+            item.error = None
             if title and not item.title:
                 item.title = title
+        return
+    except Exception as exc:  # noqa: BLE001
+        primary_error = str(exc)
+
+    fallback = _fallback_search_url(item)
+    if not fallback:
+        with _jobs_lock:
+            item.status = ItemStatus.failed
+            item.error = primary_error
+            item.progress = 0.0
+        return
+
+    try:
+        with _jobs_lock:
+            item.status = ItemStatus.downloading
+            item.progress = 0.0
+            item.error = f"Primary failed; searching: {fallback.removeprefix('ytsearch1:')}"
+        filename, title = _run_extract(fallback)
+        with _jobs_lock:
+            item.status = ItemStatus.done
+            item.progress = 100.0
+            item.filename = filename
+            item.error = None
+            if title:
+                item.title = item.title or title
+            item.url = fallback
     except Exception as exc:  # noqa: BLE001
         with _jobs_lock:
             item.status = ItemStatus.failed
-            item.error = str(exc)
+            item.error = f"{primary_error} | search fallback: {exc}"
             item.progress = 0.0
 
 

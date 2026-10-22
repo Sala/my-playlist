@@ -6,11 +6,12 @@ Local-only MP3 downloader with a classic **Winamp 2.x**-style UI. Download from 
 
 - **Search** — enter `Song - Artist` (one per line), pick a match, download
 - **Link** — paste a single YouTube / YouTube Music video URL
-- **Playlist** — load a playlist, check tracks, download selected (optional subfolder by playlist name)
+- **Playlist** — YouTube Music **or public Spotify** playlists; check tracks; download selected (optional subfolder by playlist name)
 - **MP3 only** — best available audio → MP3 (default 320 kbps) via `yt-dlp` + ffmpeg
 - **Concurrent downloads** with a live job list and progress
 - **Duplicate warnings** — compare against your music library folder and `downloads/`
-- **Retry tools** — RETRY same URL, or RE-SEARCH for another upload when a video is gone
+- **Auto search-fallback** — if a download fails for any reason, the worker searches YouTube for `Artist - Title` and tries the top match
+- **Retry tools** — manual RETRY (same URL) or RE-SEARCH on failed items
 - **YouTube cookies** — optional `cookies.txt` to reduce HTTP 403 failures
 - **Folder / file browser** — pick music library and cookie paths without typing
 - **Winamp chrome** — transport and playlist footer buttons map to real app actions
@@ -64,13 +65,23 @@ pip install -U yt-dlp
 
 ## Run
 
-From the repo root:
+### Easy way (Windows)
+
+Double-click `start.bat`, or in PowerShell from the repo root:
+
+```powershell
+.\start.ps1
+```
+
+The script checks Python, ffmpeg, and pip packages, prints install hints if something is missing, creates `.venv` if needed, then starts the server and opens [http://127.0.0.1:8765](http://127.0.0.1:8765).
+
+### Manual way
 
 ```bash
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8765
 ```
 
-Open [http://127.0.0.1:8765](http://127.0.0.1:8765).
+(Use the venv: `.venv\Scripts\activate` on Windows, then the same command.)
 
 Downloaded files go under `downloads/` (gitignored). Playlist downloads can use `downloads/<playlist-name>/` when **Playlist subfolder** is enabled in EQ.
 
@@ -80,8 +91,15 @@ Downloaded files go under `downloads/` (gitignored). Playlist downloads can use 
 |-----|---------|
 | **SRCH** | Multi-line search; choose one candidate per song; download |
 | **LINK** | One video URL → download |
-| **PL** | Playlist URL → checkboxes → download selected |
+| **PL** | YouTube Music or **public Spotify** playlist URL → checkboxes → download selected |
 | **EQ** | Settings (stored in browser `localStorage`) |
+
+### Spotify playlists
+
+- Paste a **public** `open.spotify.com/playlist/...` link into **PL** (no Spotify API keys, no Premium required for this method).
+- Tracks are read from Spotify’s public **embed** page, then each selected song is downloaded via YouTube search (`Artist - Title`).
+- Embed pages typically expose up to ~**100** tracks; longer playlists are truncated to what Spotify embeds.
+- **Private** Spotify playlists are not supported.
 
 ### EQ settings
 
@@ -110,13 +128,16 @@ If matches are found you can **SKIP DUPES**, **DOWNLOAD ALL**, or **CANCEL**.
 
 ## Failed downloads
 
-| Problem | What to do |
-|---------|------------|
-| Temporary / **403 Forbidden** | Set **YouTube cookies.txt** in EQ, then **RETRY**. Also try lower concurrency or `pip install -U yt-dlp`. |
-| **Video unavailable** | Use **RE-SEARCH** on that failed item (searches by title, downloads the top match). |
-| Same URL might work later | **RETRY** re-queues the original link. |
+On any download error (403, unavailable, network, etc.), the backend **automatically** retries once with a YouTube search for the track title (`ytsearch1:Artist - Title`). Spotify playlist rows already start as search URLs.
 
-Failed items in the job list show **RETRY** and **RE-SEARCH** buttons, plus short tips.
+If that still fails, the job item stays **FAILED**. You can then:
+
+| Action | What it does |
+|--------|----------------|
+| **RETRY** | Same URL again (helps with temporary 403s; set cookies in EQ first) |
+| **RE-SEARCH** | Manual search by title → top match |
+
+Also keep yt-dlp updated: `pip install -U yt-dlp`.
 
 ### Exporting cookies (for 403s)
 
@@ -149,6 +170,7 @@ my-playlist/
   app/
     main.py          # FastAPI routes + static hosting
     downloader.py    # yt-dlp search, playlist, downloads, jobs
+    spotify.py       # Public Spotify playlist via embed page
     library.py       # Duplicate index / matching
     fsbrowser.py     # Local folder/file picker API
     models.py        # Request/response models
@@ -171,5 +193,6 @@ my-playlist/
 ## Notes
 
 - For personal / local use only.
-- Some videos are region-locked, private, or removed; RE-SEARCH or another link may be required.
+- Some videos are region-locked, private, or removed; auto search-fallback and manual RE-SEARCH help in most cases.
 - Cookie files stay on your machine; the path is stored in `localStorage` and sent to the local API when downloading.
+- Spotify embed scraping can break if Spotify changes their embed HTML; no official API is used.
