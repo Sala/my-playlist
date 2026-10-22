@@ -10,6 +10,7 @@ class SearchRequest(BaseModel):
     queries: list[str] = Field(..., min_length=1)
     limit: int = Field(default=5, ge=1, le=20)
     cookiefile: Optional[str] = None
+    cookies_from_browser: Optional[str] = None
 
 
 class Candidate(BaseModel):
@@ -33,6 +34,7 @@ class SearchResponse(BaseModel):
 class PlaylistRequest(BaseModel):
     url: str = Field(..., min_length=1)
     cookiefile: Optional[str] = None
+    cookies_from_browser: Optional[str] = None
 
 
 class PlaylistEntry(BaseModel):
@@ -62,6 +64,7 @@ class DownloadRequest(BaseModel):
     audio_bitrate: int = Field(default=320, ge=64, le=320)
     filename_template: str = "Artist - Title"
     cookiefile: Optional[str] = None
+    cookies_from_browser: Optional[str] = None
 
 
 class ItemStatus(str, Enum):

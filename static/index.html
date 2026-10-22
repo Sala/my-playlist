@@ -110,7 +110,17 @@
               <button type="button" class="bevel-btn" id="browseMusicDirBtn">BROWSE</button>
             </div>
 
-            <label class="field-label" for="setCookieFile">YouTube cookies.txt</label>
+            <label class="field-label" for="setCookiesBrowser">YouTube cookies from browser</label>
+            <select id="setCookiesBrowser" class="well input">
+              <option value="">Off</option>
+              <option value="chrome">Chrome</option>
+              <option value="edge">Edge</option>
+              <option value="firefox">Firefox</option>
+              <option value="brave">Brave</option>
+            </select>
+            <p class="field-hint">Needed for age-restricted videos. Close the browser first if extraction fails.</p>
+
+            <label class="field-label" for="setCookieFile">Or cookies.txt file</label>
             <div class="path-row">
               <input id="setCookieFile" class="well input" type="text" placeholder="D:\cookies.txt" />
               <button type="button" class="bevel-btn" id="browseCookieBtn">BROWSE</button>

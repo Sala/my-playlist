@@ -56,8 +56,21 @@ def _find_ffmpeg_location() -> Optional[str]:
 _FFMPEG_LOCATION = _find_ffmpeg_location()
 
 _INVALID_FS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_ANSI = re.compile(r"\x1b\[[0-9;]*m|\[[0-9;]*m")
+_ALLOWED_BROWSERS = frozenset({"chrome", "edge", "firefox", "brave", "chromium", "opera"})
 _jobs: dict[str, JobResponse] = {}
 _jobs_lock = threading.Lock()
+
+
+def _clean_error(message: str) -> str:
+    return _ANSI.sub("", message or "").strip()
+
+
+def _normalize_browser(name: Optional[str]) -> Optional[str]:
+    if not name:
+        return None
+    key = name.strip().lower()
+    return key if key in _ALLOWED_BROWSERS else None
 
 
 def _sanitize_filename(name: str, fallback: str = "track") -> str:
@@ -86,23 +99,33 @@ def _candidate_from_info(info: dict[str, Any]) -> Candidate:
     )
 
 
-def _apply_cookiefile(opts: dict[str, Any], cookiefile: Optional[str]) -> None:
-    if not cookiefile:
-        return
-    path = Path(cookiefile)
-    if path.is_file():
-        opts["cookiefile"] = str(path)
+def _apply_cookies(
+    opts: dict[str, Any],
+    cookiefile: Optional[str] = None,
+    cookies_from_browser: Optional[str] = None,
+) -> None:
+    # Explicit cookie file wins over browser extraction
+    if cookiefile:
+        path = Path(cookiefile)
+        if path.is_file():
+            opts["cookiefile"] = str(path)
+            return
+    browser = _normalize_browser(cookies_from_browser)
+    if browser:
+        opts["cookiesfrombrowser"] = (browser,)
 
 
 def _ydl_base_opts(
     *,
     cookiefile: Optional[str] = None,
+    cookies_from_browser: Optional[str] = None,
     skip_download: bool = False,
 ) -> dict[str, Any]:
     opts: dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
+        "no_color": True,
         # Helps with many 403 / SABR issues on YouTube
         "extractor_args": {
             "youtube": {
@@ -114,7 +137,7 @@ def _ydl_base_opts(
     }
     if skip_download:
         opts["skip_download"] = True
-    _apply_cookiefile(opts, cookiefile)
+    _apply_cookies(opts, cookiefile=cookiefile, cookies_from_browser=cookies_from_browser)
     if _FFMPEG_LOCATION:
         opts["ffmpeg_location"] = _FFMPEG_LOCATION
     return opts
@@ -124,9 +147,14 @@ def search_queries(
     queries: list[str],
     limit: int = 5,
     cookiefile: Optional[str] = None,
+    cookies_from_browser: Optional[str] = None,
 ) -> list[QueryResult]:
     results: list[QueryResult] = []
-    ydl_opts = _ydl_base_opts(cookiefile=cookiefile, skip_download=True)
+    ydl_opts = _ydl_base_opts(
+        cookiefile=cookiefile,
+        cookies_from_browser=cookies_from_browser,
+        skip_download=True,
+    )
     ydl_opts["extract_flat"] = False
 
     for raw in queries:
@@ -140,16 +168,24 @@ def search_queries(
             candidates = [_candidate_from_info(e) for e in entries if e]
             results.append(QueryResult(query=query, candidates=candidates))
         except Exception as exc:  # noqa: BLE001
-            results.append(QueryResult(query=query, candidates=[], error=str(exc)))
+            results.append(QueryResult(query=query, candidates=[], error=_clean_error(str(exc))))
     return results
 
 
-def fetch_playlist(url: str, cookiefile: Optional[str] = None) -> PlaylistResponse:
+def fetch_playlist(
+    url: str,
+    cookiefile: Optional[str] = None,
+    cookies_from_browser: Optional[str] = None,
+) -> PlaylistResponse:
     cleaned = (url or "").strip()
     if spotify.is_spotify_playlist_url(cleaned) or spotify.looks_like_spotify_host(cleaned):
         return spotify.fetch_public_playlist(cleaned)
 
-    ydl_opts = _ydl_base_opts(cookiefile=cookiefile, skip_download=True)
+    ydl_opts = _ydl_base_opts(
+        cookiefile=cookiefile,
+        cookies_from_browser=cookies_from_browser,
+        skip_download=True,
+    )
     ydl_opts["extract_flat"] = "in_playlist"
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         data = ydl.extract_info(cleaned, download=False)
@@ -198,17 +234,9 @@ def _search_query_for_item(item: JobItemStatus) -> Optional[str]:
     return None
 
 
-def _fallback_search_url(item: JobItemStatus) -> Optional[str]:
-    query = _search_query_for_item(item)
-    if not query:
-        return None
-    primary = (item.url or "").strip()
-    candidate = f"ytsearch1:{query}"
-    if primary.lower() == candidate.lower():
-        return None
-    if primary.lower().startswith("ytsearch1:") and primary.split(":", 1)[1].strip().lower() == query.lower():
-        return None
-    return candidate
+def _video_id_from_url(url: str) -> Optional[str]:
+    m = re.search(r"(?:v=|/shorts/|youtu\.be/)([A-Za-z0-9_-]{6,})", url or "")
+    return m.group(1) if m else None
 
 
 def _output_template(subdir: Optional[str], filename_template: str) -> str:
@@ -257,6 +285,7 @@ def _download_one(
     embed_metadata: bool,
     audio_bitrate: int,
     cookiefile: Optional[str],
+    cookies_from_browser: Optional[str],
 ) -> None:
     with _jobs_lock:
         item.status = ItemStatus.downloading
@@ -273,7 +302,10 @@ def _download_one(
     if embed_metadata:
         postprocessors.append({"key": "FFmpegMetadata", "add_metadata": True})
 
-    ydl_opts = _ydl_base_opts(cookiefile=cookiefile)
+    ydl_opts = _ydl_base_opts(
+        cookiefile=cookiefile,
+        cookies_from_browser=cookies_from_browser,
+    )
     ydl_opts.update(
         {
             "format": "bestaudio/best",
@@ -285,13 +317,13 @@ def _download_one(
         }
     )
 
-    def _run_extract(source: str) -> tuple[Optional[str], Optional[str]]:
+    def _run_extract(source: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(source, download=True)
             filename = None
             title = None
+            vid = None
             if info:
-                # ytsearch results may nest the real entry
                 if info.get("_type") == "playlist" and info.get("entries"):
                     info = next((e for e in info["entries"] if e), info)
                 prepared = ydl.prepare_filename(info)
@@ -304,11 +336,10 @@ def _download_one(
                 else:
                     filename = str(mp3_path)
                 title = info.get("title")
-            return filename, title
+                vid = info.get("id")
+            return filename, title, vid
 
-    primary_error: Optional[str] = None
-    try:
-        filename, title = _run_extract(item.url)
+    def _mark_done(filename: Optional[str], title: Optional[str], url: Optional[str] = None) -> None:
         with _jobs_lock:
             item.status = ItemStatus.done
             item.progress = 100.0
@@ -316,37 +347,87 @@ def _download_one(
             item.error = None
             if title and not item.title:
                 item.title = title
+            if url:
+                item.url = url
+
+    primary_error: Optional[str] = None
+    exclude: set[str] = set()
+    primary_id = _video_id_from_url(item.url)
+    if primary_id:
+        exclude.add(primary_id)
+
+    try:
+        filename, title, _vid = _run_extract(item.url)
+        _mark_done(filename, title)
         return
     except Exception as exc:  # noqa: BLE001
-        primary_error = str(exc)
+        primary_error = _clean_error(str(exc))
 
-    fallback = _fallback_search_url(item)
-    if not fallback:
+    query = _search_query_for_item(item)
+    if not query:
         with _jobs_lock:
             item.status = ItemStatus.failed
             item.error = primary_error
             item.progress = 0.0
         return
 
+    # Try several search hits so an age-gated top result doesn't block fallback
+    search_opts = _ydl_base_opts(
+        cookiefile=cookiefile,
+        cookies_from_browser=cookies_from_browser,
+        skip_download=True,
+    )
+    candidates: list[str] = []
     try:
-        with _jobs_lock:
-            item.status = ItemStatus.downloading
-            item.progress = 0.0
-            item.error = f"Primary failed; searching: {fallback.removeprefix('ytsearch1:')}"
-        filename, title = _run_extract(fallback)
-        with _jobs_lock:
-            item.status = ItemStatus.done
-            item.progress = 100.0
-            item.filename = filename
-            item.error = None
-            if title:
-                item.title = item.title or title
-            item.url = fallback
+        with yt_dlp.YoutubeDL(search_opts) as ydl:
+            data = ydl.extract_info(f"ytsearch5:{query}", download=False)
+        for entry in data.get("entries") or []:
+            if not entry:
+                continue
+            vid = entry.get("id") or ""
+            if vid and vid in exclude:
+                continue
+            url = entry.get("webpage_url") or entry.get("url")
+            if url and not str(url).startswith("http"):
+                url = f"https://www.youtube.com/watch?v={vid}" if vid else None
+            elif not url and vid:
+                url = f"https://www.youtube.com/watch?v={vid}"
+            if url:
+                candidates.append(str(url))
     except Exception as exc:  # noqa: BLE001
         with _jobs_lock:
             item.status = ItemStatus.failed
-            item.error = f"{primary_error} | search fallback: {exc}"
+            item.error = f"{primary_error} | search: {_clean_error(str(exc))}"
             item.progress = 0.0
+        return
+
+    last_err = primary_error
+    tried = 0
+    for url in candidates:
+        vid = _video_id_from_url(url)
+        if vid and vid in exclude:
+            continue
+        tried += 1
+        with _jobs_lock:
+            item.status = ItemStatus.downloading
+            item.progress = 0.0
+            item.error = f"Primary failed; trying search result #{tried}"
+        try:
+            filename, title, _got_id = _run_extract(url)
+            _mark_done(filename, title, url=url)
+            return
+        except Exception as exc:  # noqa: BLE001
+            last_err = _clean_error(str(exc))
+            if vid:
+                exclude.add(vid)
+
+    tip = ""
+    if last_err and ("age" in last_err.lower() or "sign in" in last_err.lower()):
+        tip = " | Set EQ → cookies from browser (or cookies.txt) while logged into YouTube"
+    with _jobs_lock:
+        item.status = ItemStatus.failed
+        item.error = f"{primary_error} | search fallback: {last_err}{tip}"
+        item.progress = 0.0
 
 
 def _run_job(
@@ -357,6 +438,7 @@ def _run_job(
     audio_bitrate: int,
     filename_template: str,
     cookiefile: Optional[str],
+    cookies_from_browser: Optional[str],
 ) -> None:
     outtmpl = _output_template(output_subdir, filename_template)
 
@@ -377,6 +459,7 @@ def _run_job(
                 embed_metadata,
                 audio_bitrate,
                 cookiefile,
+                cookies_from_browser,
             )
             for job_item in job_items
         ]
@@ -399,6 +482,7 @@ def start_download_job(
     audio_bitrate: int = 320,
     filename_template: str = "Artist - Title",
     cookiefile: Optional[str] = None,
+    cookies_from_browser: Optional[str] = None,
 ) -> str:
     job_id = str(uuid.uuid4())
     with _jobs_lock:
@@ -420,6 +504,7 @@ def start_download_job(
             audio_bitrate,
             filename_template,
             cookiefile,
+            cookies_from_browser,
         ),
         daemon=True,
     )

@@ -325,6 +325,14 @@ body {
   letter-spacing: 0.03em;
 }
 
+.field-hint {
+  margin: 0.15rem 0 0.35rem;
+  color: var(--lcd-green-dim);
+  font-family: var(--font-lcd);
+  font-size: 10px;
+  line-height: 1.3;
+}
+
 .well {
   width: 100%;
   background: #000;

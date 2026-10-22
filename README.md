@@ -110,7 +110,8 @@ Downloaded files go under `downloads/` (gitignored). Playlist downloads can use 
 | Filename template | Artist - Title | Or title only |
 | Audio bitrate (kbps) | 320 | MP3 encode quality |
 | Music library folder | _(empty)_ | Used for duplicate checks; **BROWSE** available |
-| YouTube cookies.txt | _(empty)_ | Netscape cookie file; helps with 403s; **BROWSE** available |
+| YouTube cookies from browser | Off | Chrome / Edge / Firefox / Brave — needed for **age-restricted** videos (close browser if extraction fails) |
+| Or cookies.txt file | _(empty)_ | Netscape cookie file alternative; **BROWSE** available |
 | Playlist subfolder | on | Save playlist tracks under a named folder |
 | Embed ID3 metadata | on | When tags are available |
 | Warn on duplicates | on | Confirm before re-downloading |
@@ -139,12 +140,16 @@ If that still fails, the job item stays **FAILED**. You can then:
 
 Also keep yt-dlp updated: `pip install -U yt-dlp`.
 
-### Exporting cookies (for 403s)
+### Cookies (age-restricted / 403s)
 
-1. Log into YouTube in your browser.
-2. Export cookies in **Netscape `cookies.txt`** format (browser extension such as “Get cookies.txt LOCALLY” or similar).
-3. In EQ, set **YouTube cookies.txt** (or **BROWSE** to the file) and **SAVE**.
-4. **RETRY** the failed tracks.
+Easiest:
+
+1. Log into YouTube in Chrome/Edge/Firefox/Brave.
+2. In **EQ**, set **YouTube cookies from browser** to that browser → **SAVE**.
+3. If yt-dlp can’t read the profile, **fully quit** the browser and retry.
+4. **RETRY** the failed track.
+
+Alternative: export Netscape `cookies.txt` and set **Or cookies.txt file** in EQ.
 
 ## Winamp controls
 

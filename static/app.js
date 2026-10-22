@@ -10,6 +10,7 @@
     audioBitrate: 320,
     musicDir: "",
     cookieFile: "",
+    cookiesFromBrowser: "",
     checkDuplicates: true,
   };
 
@@ -70,6 +71,7 @@
     setEmbedMetadata: document.getElementById("setEmbedMetadata"),
     setMusicDir: document.getElementById("setMusicDir"),
     setCookieFile: document.getElementById("setCookieFile"),
+    setCookiesBrowser: document.getElementById("setCookiesBrowser"),
     setCheckDuplicates: document.getElementById("setCheckDuplicates"),
     browseMusicDirBtn: document.getElementById("browseMusicDirBtn"),
     browseCookieBtn: document.getElementById("browseCookieBtn"),
@@ -129,6 +131,7 @@
     els.setBitrate.value = String(settings.audioBitrate);
     els.setMusicDir.value = settings.musicDir || "";
     els.setCookieFile.value = settings.cookieFile || "";
+    els.setCookiesBrowser.value = settings.cookiesFromBrowser || "";
     els.setPlaylistSubfolder.checked = !!settings.playlistSubfolder;
     els.setEmbedMetadata.checked = !!settings.embedMetadata;
     els.setCheckDuplicates.checked = !!settings.checkDuplicates;
@@ -142,6 +145,7 @@
       audioBitrate: clampInt(els.setBitrate.value, 64, 320, DEFAULTS.audioBitrate),
       musicDir: (els.setMusicDir.value || "").trim(),
       cookieFile: (els.setCookieFile.value || "").trim(),
+      cookiesFromBrowser: (els.setCookiesBrowser.value || "").trim(),
       playlistSubfolder: els.setPlaylistSubfolder.checked,
       embedMetadata: els.setEmbedMetadata.checked,
       checkDuplicates: els.setCheckDuplicates.checked,
@@ -255,6 +259,17 @@
     return settings.cookieFile || null;
   }
 
+  function cookiesBrowserPayload() {
+    return settings.cookiesFromBrowser || null;
+  }
+
+  function authPayload() {
+    return {
+      cookiefile: cookiePayload(),
+      cookies_from_browser: cookiesBrowserPayload(),
+    };
+  }
+
   function downloadPayload(items, outputSubdir) {
     return {
       items,
@@ -263,7 +278,7 @@
       embed_metadata: settings.embedMetadata,
       audio_bitrate: settings.audioBitrate,
       filename_template: settings.filenameTemplate,
-      cookiefile: cookiePayload(),
+      ...authPayload(),
     };
   }
 
@@ -409,6 +424,12 @@
     return /403|forbidden/i.test(error || "");
   }
 
+  function isAgeGateError(error) {
+    return /sign in to confirm your age|age.restricted|confirm your age/i.test(
+      String(error || "")
+    );
+  }
+
   async function retrySameUrl(item) {
     await startDownload([{ url: item.url, title: item.title || null }], null, "Retry");
   }
@@ -425,8 +446,8 @@
         method: "POST",
         body: JSON.stringify({
           queries: [query],
-          limit: 1,
-          cookiefile: cookiePayload(),
+          limit: 5,
+          ...authPayload(),
         }),
       });
       const first = data.results?.[0]?.candidates?.[0];
@@ -472,11 +493,13 @@
                 </div>`
               : "";
             const hint =
-              failed && isForbiddenError(item.error)
-                ? `<div class="error-text">Tip: set cookies.txt in EQ for 403s</div>`
-                : failed && isUnavailableError(item.error)
-                  ? `<div class="error-text">Tip: use RE-SEARCH for a new upload</div>`
-                  : "";
+              failed && isAgeGateError(item.error)
+                ? `<div class="error-text">Tip: EQ → cookies from browser (logged into YouTube), then RETRY</div>`
+                : failed && isForbiddenError(item.error)
+                  ? `<div class="error-text">Tip: EQ → cookies from browser or cookies.txt, then RETRY</div>`
+                  : failed && isUnavailableError(item.error)
+                    ? `<div class="error-text">Tip: use RE-SEARCH for a new upload</div>`
+                    : "";
             return `
               <div class="job-item">
                 <div class="job-item-top">
@@ -592,7 +615,7 @@
         body: JSON.stringify({
           queries: lines,
           limit: settings.searchResultCount,
-          cookiefile: cookiePayload(),
+          ...authPayload(),
         }),
       });
       renderSearchResults(data.results);
@@ -681,7 +704,7 @@
     try {
       const data = await api("/api/playlist", {
         method: "POST",
-        body: JSON.stringify({ url, cookiefile: cookiePayload() }),
+        body: JSON.stringify({ url, ...authPayload() }),
       });
       loadedPlaylist = data;
       renderPlaylist(data);

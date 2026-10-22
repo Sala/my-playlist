@@ -37,21 +37,45 @@ def _validate_cookiefile(cookiefile: Optional[str]) -> Optional[str]:
     return str(path)
 
 
+def _validate_browser(name: Optional[str]) -> Optional[str]:
+    if not name:
+        return None
+    key = name.strip().lower()
+    allowed = {"chrome", "edge", "firefox", "brave", "chromium", "opera"}
+    if key not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported browser for cookies: {name}. Use one of: {', '.join(sorted(allowed))}",
+        )
+    return key
+
+
 @app.post("/api/search", response_model=SearchResponse)
 def api_search(body: SearchRequest) -> SearchResponse:
     queries = [q.strip() for q in body.queries if q.strip()]
     if not queries:
         raise HTTPException(status_code=400, detail="No queries provided")
     cookiefile = _validate_cookiefile(body.cookiefile)
-    results = downloader.search_queries(queries, limit=body.limit, cookiefile=cookiefile)
+    browser = _validate_browser(body.cookies_from_browser)
+    results = downloader.search_queries(
+        queries,
+        limit=body.limit,
+        cookiefile=cookiefile,
+        cookies_from_browser=browser,
+    )
     return SearchResponse(results=results)
 
 
 @app.post("/api/playlist", response_model=PlaylistResponse)
 def api_playlist(body: PlaylistRequest) -> PlaylistResponse:
     cookiefile = _validate_cookiefile(body.cookiefile)
+    browser = _validate_browser(body.cookies_from_browser)
     try:
-        return downloader.fetch_playlist(body.url.strip(), cookiefile=cookiefile)
+        return downloader.fetch_playlist(
+            body.url.strip(),
+            cookiefile=cookiefile,
+            cookies_from_browser=browser,
+        )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -76,6 +100,7 @@ def api_check_duplicates(body: CheckDuplicatesRequest) -> CheckDuplicatesRespons
 @app.post("/api/download", response_model=DownloadStartResponse)
 def api_download(body: DownloadRequest) -> DownloadStartResponse:
     cookiefile = _validate_cookiefile(body.cookiefile)
+    browser = _validate_browser(body.cookies_from_browser)
     job_id = downloader.start_download_job(
         items=body.items,
         output_subdir=body.output_subdir,
@@ -84,6 +109,7 @@ def api_download(body: DownloadRequest) -> DownloadStartResponse:
         audio_bitrate=body.audio_bitrate,
         filename_template=body.filename_template,
         cookiefile=cookiefile,
+        cookies_from_browser=browser,
     )
     return DownloadStartResponse(job_id=job_id)
 
