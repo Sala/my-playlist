@@ -1,5 +1,7 @@
 downloads/*
 !downloads/.gitkeep
+data/*
+!data/.gitkeep
 __pycache__/
 *.py[cod]
 *$py.class
@@ -12,3 +14,4 @@ dist/
 build/
 .DS_Store
 Thumbs.db
+scripts/move_to_library_report.txt

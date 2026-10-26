@@ -3,211 +3,276 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>MY PLAYLIST</title>
+  <title>My Playlist</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Press+Start+2P&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
-  <div class="desk">
-    <section class="player window" aria-label="Main player">
-      <header class="titlebar">
-        <h1 class="brand">MY PLAYLIST</h1>
-        <div class="titlebar-right">
-          <button type="button" class="win-btn" id="winMinBtn" title="Toggle form panels">_</button>
-          <button type="button" class="win-btn" id="winFocusBtn" title="Focus job list">□</button>
-          <button type="button" class="win-btn" id="winReadyBtn" title="Reset status">×</button>
-        </div>
-      </header>
-
-      <div class="display-row">
-        <canvas id="viz" class="viz" width="76" height="32" aria-hidden="true"></canvas>
-        <div class="lcd" id="statusLcd" aria-live="polite">
-          <span class="lcd-line">1. READY — MP3 320 &lt;0:00&gt;</span>
-        </div>
-        <div class="lcd-meta" aria-hidden="true">
-          <div><strong id="lcdBitrate">320</strong> kbps</div>
-          <div><strong>44</strong> kHz</div>
-          <div class="stereo">stereo</div>
-        </div>
-      </div>
-
-      <div class="slider-row" aria-hidden="true">
-        <div class="seg-slider vol" title="Volume">
-          <div class="seg-fill" style="width: 78%"></div>
-        </div>
-        <div class="seg-slider bal" title="Balance">
-          <div class="seg-fill center" style="width: 50%"></div>
-        </div>
-      </div>
-
-      <div class="transport">
-        <button type="button" class="tr-btn" id="trPrev" title="Previous job">⏮</button>
-        <button type="button" class="tr-btn" id="trPlay" title="Focus job list">▶</button>
-        <button type="button" class="tr-btn" id="trPause" title="Pause polling display">⏸</button>
-        <button type="button" class="tr-btn" id="trStop" title="Reset status to READY">⏹</button>
-        <button type="button" class="tr-btn" id="trNext" title="Next job">⏭</button>
-        <button type="button" class="tr-btn" id="trEject" title="Open Link mode">⏏</button>
-      </div>
-
-      <nav class="mode-bar" role="tablist" aria-label="Modes">
-        <button type="button" class="mode-btn active" data-mode="search" role="tab" aria-selected="true">SRCH</button>
-        <button type="button" class="mode-btn" data-mode="link" role="tab" aria-selected="false">LINK</button>
-        <button type="button" class="mode-btn" data-mode="playlist" role="tab" aria-selected="false">PL</button>
-        <button type="button" class="mode-btn" data-mode="settings" role="tab" aria-selected="false">EQ</button>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <button type="button" class="brand" id="brandHomeBtn" title="Go home">
+        <span class="brand-mark">My Playlist</span>
+      </button>
+      <nav class="topbar-actions">
+        <button type="button" class="btn btn-ghost" id="navHomeBtn">Home</button>
+        <button type="button" class="btn btn-jobs" id="jobsToggleBtn" aria-expanded="false" aria-controls="jobsPanel">
+          Jobs
+          <span class="jobs-badge" id="jobsBadge" hidden>0</span>
+        </button>
       </nav>
+    </div>
+  </header>
 
-      <div class="panels">
-        <section class="panel active" id="panel-search" role="tabpanel">
-          <label class="field-label" for="searchInput">Song - Artist (one per line)</label>
-          <textarea id="searchInput" class="well" rows="5" placeholder="Bohemian Rhapsody - Queen&#10;Lose Yourself - Eminem"></textarea>
-          <div class="btn-row">
-            <button type="button" class="bevel-btn" id="searchBtn">SEARCH</button>
-            <button type="button" class="bevel-btn" id="searchDownloadBtn" disabled>DOWNLOAD</button>
+  <div class="app">
+    <main class="main" id="main">
+      <!-- HOME -->
+      <section class="screen active" id="screen-home" data-screen="home">
+        <div class="home-hero">
+          <h1 class="home-title">What do you want to do?</h1>
+          <p class="home-sub">Local downloads, playlist sync, and library import — pick a path.</p>
+        </div>
+        <div class="home-grid" role="list">
+          <button type="button" class="home-card" data-go="search" role="listitem">
+            <span class="home-card-title">Search songs</span>
+            <span class="home-card-desc">Find tracks by title and artist, then download.</span>
+          </button>
+          <button type="button" class="home-card" data-go="link" role="listitem">
+            <span class="home-card-title">Download link</span>
+            <span class="home-card-desc">Paste a YouTube or YouTube Music video URL.</span>
+          </button>
+          <button type="button" class="home-card" data-go="playlist-dl" role="listitem">
+            <span class="home-card-title">Download playlist</span>
+            <span class="home-card-desc">Load a playlist once, pick tracks, download. Not saved.</span>
+          </button>
+          <button type="button" class="home-card" data-go="sync" role="listitem">
+            <span class="home-card-title">Sync playlists</span>
+            <span class="home-card-desc">Watch saved playlists for songs you don’t have yet.</span>
+            <span class="home-card-badges">
+              <span class="pill" id="homeDuePill" hidden></span>
+              <span class="pill pill-queue" id="homeQueuePill" hidden></span>
+            </span>
+          </button>
+          <button type="button" class="home-card" data-go="library" role="listitem">
+            <span class="home-card-title">Import to library</span>
+            <span class="home-card-desc">Move downloads into artist folders with cleaned tags.</span>
+          </button>
+          <button type="button" class="home-card" data-go="settings" role="listitem">
+            <span class="home-card-title">Settings</span>
+            <span class="home-card-desc">Library path, sync interval, cookies, quality.</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- SEARCH -->
+      <section class="screen" id="screen-search" data-screen="search" hidden>
+        <div class="screen-head">
+          <h2 class="screen-title">Search songs</h2>
+        </div>
+        <p class="screen-lead">One song per line as <code>Song - Artist</code>.</p>
+        <div id="searchAlert" class="alert" hidden></div>
+        <label class="label" for="searchInput">Queries</label>
+        <textarea id="searchInput" class="field field-area" rows="6" placeholder="Bohemian Rhapsody - Queen&#10;Lose Yourself - Eminem"></textarea>
+        <div class="toolbar">
+          <button type="button" class="btn btn-primary" id="searchBtn">Search</button>
+          <button type="button" class="btn btn-secondary" id="searchDownloadBtn" disabled>Download selected</button>
+        </div>
+        <div id="searchResults" class="result-block" hidden></div>
+      </section>
+
+      <!-- LINK -->
+      <section class="screen" id="screen-link" data-screen="link" hidden>
+        <div class="screen-head">
+          <h2 class="screen-title">Download link</h2>
+        </div>
+        <p class="screen-lead">Paste a single YouTube or YouTube Music video URL.</p>
+        <div id="linkAlert" class="alert" hidden></div>
+        <label class="label" for="linkInput">URL</label>
+        <input id="linkInput" class="field" type="url" placeholder="https://www.youtube.com/watch?v=..." />
+        <div class="toolbar">
+          <button type="button" class="btn btn-primary" id="linkDownloadBtn">Download</button>
+        </div>
+      </section>
+
+      <!-- PLAYLIST DOWNLOAD (one-shot) -->
+      <section class="screen" id="screen-playlist-dl" data-screen="playlist-dl" hidden>
+        <div class="screen-head">
+          <h2 class="screen-title">Download playlist</h2>
+        </div>
+        <p class="screen-lead">One-shot download. Tracks are not saved for sync — use Sync playlists for that.</p>
+        <div id="plDlAlert" class="alert" hidden></div>
+        <label class="label" for="plDlInput">Playlist URL (YouTube Music or public Spotify)</label>
+        <input id="plDlInput" class="field" type="text" placeholder="https://open.spotify.com/playlist/..." />
+        <div class="toolbar">
+          <button type="button" class="btn btn-primary" id="plDlLoadBtn">Load</button>
+          <button type="button" class="btn btn-secondary" id="plDlSelectAllBtn" disabled>Select all</button>
+          <button type="button" class="btn btn-secondary" id="plDlSelectNoneBtn" disabled>Select none</button>
+          <button type="button" class="btn btn-primary" id="plDlDownloadBtn" disabled>Download selected</button>
+        </div>
+        <h3 class="section-label" id="plDlTitle" hidden></h3>
+        <div id="plDlResults" class="result-block" hidden></div>
+      </section>
+
+      <!-- SYNC -->
+      <section class="screen" id="screen-sync" data-screen="sync" hidden>
+        <div class="screen-head">
+          <h2 class="screen-title">Sync playlists</h2>
+        </div>
+        <p class="screen-lead">Save playlists to check every few days for songs missing from your library.</p>
+        <div id="syncAlert" class="alert" hidden></div>
+
+        <div class="sync-section">
+          <h3 class="section-heading">Saved for sync</h3>
+          <p class="section-hint" id="syncDueHint">Add a playlist URL to monitor.</p>
+          <label class="label" for="syncAddInput">Playlist URL</label>
+          <div class="row-fields">
+            <input id="syncAddInput" class="field" type="text" placeholder="https://open.spotify.com/playlist/..." />
+            <button type="button" class="btn btn-primary" id="syncAddBtn">Add</button>
           </div>
-        </section>
-
-        <section class="panel" id="panel-link" role="tabpanel" hidden>
-          <label class="field-label" for="linkInput">YouTube / YouTube Music URL</label>
-          <input id="linkInput" class="well input" type="url" placeholder="https://www.youtube.com/watch?v=..." />
-          <div class="btn-row">
-            <button type="button" class="bevel-btn" id="linkDownloadBtn">DOWNLOAD</button>
+          <div class="toolbar">
+            <button type="button" class="btn btn-secondary" id="syncDueBtn">Sync due</button>
+            <button type="button" class="btn btn-secondary" id="syncAllBtn">Sync all</button>
           </div>
-        </section>
+          <div id="savedPlaylists" class="result-block"></div>
+        </div>
 
-        <section class="panel" id="panel-playlist" role="tabpanel" hidden>
-          <label class="field-label" for="playlistInput">Playlist URL (YouTube Music or Spotify)</label>
-          <input id="playlistInput" class="well input" type="text" placeholder="https://open.spotify.com/playlist/... or YouTube Music playlist URL" />
-          <div class="btn-row">
-            <button type="button" class="bevel-btn" id="playlistLoadBtn">LOAD</button>
-            <button type="button" class="bevel-btn" id="playlistSelectAllBtn" disabled>SEL ALL</button>
-            <button type="button" class="bevel-btn" id="playlistSelectNoneBtn" disabled>SEL NONE</button>
-            <button type="button" class="bevel-btn" id="playlistDownloadBtn" disabled>DOWNLOAD</button>
+        <div class="sync-section sync-section-queue">
+          <h3 class="section-heading">Missing after sync</h3>
+          <p class="section-hint">Download what you want, or dismiss. Nothing downloads automatically.</p>
+          <div class="toolbar">
+            <button type="button" class="btn btn-secondary" id="syncSelectAllBtn" disabled>Select all</button>
+            <button type="button" class="btn btn-secondary" id="syncSelectNoneBtn" disabled>Select none</button>
+            <button type="button" class="btn btn-primary" id="syncDownloadSelectedBtn" disabled>Download selected</button>
+            <button type="button" class="btn btn-primary" id="syncDownloadAllBtn" disabled>Download all</button>
+            <button type="button" class="btn btn-ghost" id="syncDismissBtn" disabled>Dismiss</button>
           </div>
-        </section>
+          <div id="syncQueueResults" class="result-block"></div>
+        </div>
+      </section>
 
-        <section class="panel" id="panel-settings" role="tabpanel" hidden>
-          <div class="settings-grid">
-            <label class="field-label" for="setConcurrency">Concurrent downloads</label>
-            <input id="setConcurrency" class="well input" type="number" min="1" max="10" />
+      <!-- LIBRARY -->
+      <section class="screen" id="screen-library" data-screen="library" hidden>
+        <div class="screen-head">
+          <h2 class="screen-title">Import to library</h2>
+        </div>
+        <p class="screen-lead">Move files from <code>downloads/</code> into your music library folder (artist folders, cleaned tags). Always dry-run first.</p>
+        <div id="libAlert" class="alert" hidden></div>
+        <div class="toolbar">
+          <button type="button" class="btn btn-primary" id="libDryRunBtn">Dry run</button>
+          <button type="button" class="btn btn-danger" id="libApplyBtn" disabled>Apply</button>
+        </div>
+        <div id="libraryReport" class="result-block"></div>
+      </section>
 
-            <label class="field-label" for="setSearchCount">Search results per song</label>
-            <input id="setSearchCount" class="well input" type="number" min="1" max="20" />
+      <!-- SETTINGS -->
+      <section class="screen" id="screen-settings" data-screen="settings" hidden>
+        <div class="screen-head">
+          <h2 class="screen-title">Settings</h2>
+        </div>
+        <div id="settingsAlert" class="alert" hidden></div>
+        <div class="settings-grid">
+          <label class="label" for="setConcurrency">Concurrent downloads</label>
+          <input id="setConcurrency" class="field" type="number" min="1" max="10" />
 
-            <label class="field-label" for="setFilename">Filename template</label>
-            <select id="setFilename" class="well input">
-              <option value="Artist - Title">Artist - Title</option>
-              <option value="Title">Title only</option>
-            </select>
+          <label class="label" for="setSearchCount">Search results per song</label>
+          <input id="setSearchCount" class="field" type="number" min="1" max="20" />
 
-            <label class="field-label" for="setBitrate">Audio bitrate (kbps)</label>
-            <input id="setBitrate" class="well input" type="number" min="64" max="320" step="32" />
+          <label class="label" for="setFilename">Filename template</label>
+          <select id="setFilename" class="field">
+            <option value="Artist - Title">Artist - Title</option>
+            <option value="Title">Title only</option>
+          </select>
 
-            <label class="field-label" for="setMusicDir">Music library folder</label>
-            <div class="path-row">
-              <input id="setMusicDir" class="well input" type="text" placeholder="D:\Music" />
-              <button type="button" class="bevel-btn" id="browseMusicDirBtn">BROWSE</button>
-            </div>
+          <label class="label" for="setBitrate">Audio bitrate (kbps)</label>
+          <input id="setBitrate" class="field" type="number" min="64" max="320" step="32" />
 
-            <label class="field-label" for="setCookiesBrowser">YouTube cookies from browser</label>
-            <select id="setCookiesBrowser" class="well input">
-              <option value="">Off</option>
-              <option value="chrome">Chrome</option>
-              <option value="edge">Edge</option>
-              <option value="firefox">Firefox</option>
-              <option value="brave">Brave</option>
-            </select>
-            <p class="field-hint">Needed for age-restricted videos. Close the browser first if extraction fails.</p>
+          <label class="label" for="setSyncInterval">Sync interval (days)</label>
+          <input id="setSyncInterval" class="field" type="number" min="1" max="365" />
 
-            <label class="field-label" for="setCookieFile">Or cookies.txt file</label>
-            <div class="path-row">
-              <input id="setCookieFile" class="well input" type="text" placeholder="D:\cookies.txt" />
-              <button type="button" class="bevel-btn" id="browseCookieBtn">BROWSE</button>
-            </div>
-
-            <label class="check-row">
-              <input id="setPlaylistSubfolder" type="checkbox" />
-              <span>Playlist subfolder</span>
-            </label>
-
-            <label class="check-row">
-              <input id="setEmbedMetadata" type="checkbox" />
-              <span>Embed ID3 metadata</span>
-            </label>
-
-            <label class="check-row">
-              <input id="setCheckDuplicates" type="checkbox" />
-              <span>Warn on duplicates</span>
-            </label>
+          <label class="label" for="setMusicDir">Music library folder</label>
+          <div class="row-fields">
+            <input id="setMusicDir" class="field" type="text" placeholder="D:\Music" />
+            <button type="button" class="btn btn-secondary" id="browseMusicDirBtn">Browse</button>
           </div>
-          <div class="btn-row">
-            <button type="button" class="bevel-btn" id="settingsSaveBtn">SAVE</button>
-            <button type="button" class="bevel-btn" id="settingsResetBtn">RESET</button>
+
+          <label class="label" for="setCookiesBrowser">YouTube cookies from browser</label>
+          <select id="setCookiesBrowser" class="field">
+            <option value="">Off</option>
+            <option value="chrome">Chrome</option>
+            <option value="edge">Edge</option>
+            <option value="firefox">Firefox</option>
+            <option value="brave">Brave</option>
+          </select>
+          <p class="hint">Needed for age-restricted videos. Quit the browser first if extraction fails.</p>
+
+          <label class="label" for="setCookieFile">Or cookies.txt file</label>
+          <div class="row-fields">
+            <input id="setCookieFile" class="field" type="text" placeholder="D:\cookies.txt" />
+            <button type="button" class="btn btn-secondary" id="browseCookieBtn">Browse</button>
           </div>
-        </section>
+
+          <label class="check">
+            <input id="setPlaylistSubfolder" type="checkbox" />
+            <span>Save playlist downloads in a named subfolder</span>
+          </label>
+          <label class="check">
+            <input id="setEmbedMetadata" type="checkbox" />
+            <span>Embed ID3 metadata</span>
+          </label>
+          <label class="check">
+            <input id="setCheckDuplicates" type="checkbox" />
+            <span>Warn before re-downloading duplicates</span>
+          </label>
+        </div>
+        <div class="toolbar">
+          <button type="button" class="btn btn-primary" id="settingsSaveBtn">Save</button>
+          <button type="button" class="btn btn-ghost" id="settingsResetBtn">Reset defaults</button>
+        </div>
+      </section>
+    </main>
+
+    <!-- JOBS PANEL -->
+    <aside class="jobs-panel" id="jobsPanel" hidden>
+      <div class="jobs-panel-head">
+        <h2 class="jobs-panel-title">Downloads</h2>
+        <div class="toolbar tight">
+          <button type="button" class="btn btn-ghost" id="clearJobsBtn">Clear finished</button>
+          <button type="button" class="btn btn-ghost" id="jobsCloseBtn" aria-label="Close">Close</button>
+        </div>
       </div>
-    </section>
-
-    <section class="playlist-window window" aria-label="Playlist and jobs">
-      <header class="titlebar">
-        <h2 class="brand brand-sm">WINAMP PLAYLIST</h2>
-        <div class="titlebar-right">
-          <button type="button" class="win-btn" id="plWinMinBtn" title="Toggle form panels">_</button>
-          <button type="button" class="win-btn" id="plWinFocusBtn" title="Focus job list">□</button>
-          <button type="button" class="win-btn" id="plWinReadyBtn" title="Reset status">×</button>
-        </div>
-      </header>
-
-      <p class="playlist-title" id="playlistTitle" hidden></p>
-
-      <div id="listBody" class="pl-body">
-        <div id="searchResults" class="tracklist" hidden></div>
-        <div id="playlistResults" class="tracklist" hidden></div>
-        <div id="jobsList" class="tracklist jobs">
-          <p class="empty-hint">0. — empty list —</p>
-        </div>
+      <p class="jobs-status" id="jobsStatusLine">No active downloads.</p>
+      <div id="jobsList" class="jobs-list">
+        <p class="empty">No jobs yet.</p>
       </div>
-
-      <footer class="pl-footer">
-        <div class="pl-footer-btns">
-          <button type="button" class="foot-btn" id="footAdd" title="Search mode">ADD</button>
-          <button type="button" class="foot-btn" id="footRem" title="Clear finished/failed jobs">REM</button>
-          <button type="button" class="foot-btn" id="footSel" title="Select all playlist tracks">SEL</button>
-          <button type="button" class="foot-btn" id="footMisc" title="Settings">MISC</button>
-        </div>
-        <div class="pl-footer-time" id="plFooterTime">0:00 / 0:00</div>
-        <button type="button" class="foot-btn" id="footListOpts" title="Settings">LIST OPTS</button>
-      </footer>
-    </section>
+    </aside>
+    <div class="jobs-backdrop" id="jobsBackdrop" hidden></div>
   </div>
 
+  <!-- DUPLICATE MODAL -->
   <div id="dupModal" class="modal" hidden>
-    <div class="modal-window window" role="dialog" aria-modal="true" aria-labelledby="dupTitle">
-      <header class="titlebar">
-        <h2 class="brand brand-sm" id="dupTitle">DUPLICATE CHECK</h2>
-      </header>
-      <p class="modal-msg">Already in your library:</p>
-      <ul id="dupList" class="dup-list well"></ul>
-      <div class="btn-row modal-actions">
-        <button type="button" class="bevel-btn" id="dupSkipBtn">SKIP DUPES</button>
-        <button type="button" class="bevel-btn" id="dupAllBtn">DOWNLOAD ALL</button>
-        <button type="button" class="bevel-btn" id="dupCancelBtn">CANCEL</button>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="dupTitle">
+      <h2 id="dupTitle" class="modal-title">Already in your library</h2>
+      <p class="modal-msg">These tracks look like duplicates:</p>
+      <ul id="dupList" class="dup-list"></ul>
+      <div class="toolbar">
+        <button type="button" class="btn btn-secondary" id="dupSkipBtn">Skip duplicates</button>
+        <button type="button" class="btn btn-primary" id="dupAllBtn">Download all</button>
+        <button type="button" class="btn btn-ghost" id="dupCancelBtn">Cancel</button>
       </div>
     </div>
   </div>
 
+  <!-- FS MODAL -->
   <div id="fsModal" class="modal" hidden>
-    <div class="modal-window window fs-window" role="dialog" aria-modal="true" aria-labelledby="fsTitle">
-      <header class="titlebar">
-        <h2 class="brand brand-sm" id="fsTitle">SELECT FOLDER</h2>
-      </header>
-      <p class="modal-msg" id="fsCurrentPath">Drives</p>
-      <div id="fsList" class="fs-list well"></div>
-      <div class="btn-row modal-actions">
-        <button type="button" class="bevel-btn" id="fsUpBtn">UP</button>
-        <button type="button" class="bevel-btn" id="fsSelectBtn">SELECT</button>
-        <button type="button" class="bevel-btn" id="fsCancelBtn">CANCEL</button>
+    <div class="modal-card modal-wide" role="dialog" aria-modal="true" aria-labelledby="fsTitle">
+      <h2 id="fsTitle" class="modal-title">Select folder</h2>
+      <p class="modal-msg path-line" id="fsCurrentPath">Drives</p>
+      <div id="fsList" class="fs-list"></div>
+      <div class="toolbar">
+        <button type="button" class="btn btn-secondary" id="fsUpBtn">Up</button>
+        <button type="button" class="btn btn-primary" id="fsSelectBtn">Select</button>
+        <button type="button" class="btn btn-ghost" id="fsCancelBtn">Cancel</button>
       </div>
     </div>
   </div>

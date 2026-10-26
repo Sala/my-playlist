@@ -1,5 +1,6 @@
 (() => {
   const STORAGE_KEY = "my-playlist-settings";
+  const MIGRATED_KEY = "my-playlist-settings-migrated";
 
   const DEFAULTS = {
     concurrency: 3,
@@ -8,14 +9,15 @@
     filenameTemplate: "Artist - Title",
     embedMetadata: true,
     audioBitrate: 320,
-    musicDir: "",
+    musicDir: "D:\\music",
     cookieFile: "",
     cookiesFromBrowser: "",
     checkDuplicates: true,
+    syncIntervalDays: 7,
   };
 
-  /** @type {ReturnType<typeof loadSettings>} */
-  let settings = loadSettings();
+  /** @type {typeof DEFAULTS} */
+  let settings = { ...DEFAULTS };
   /** @type {Map<string, {title?: string}>} */
   const playlistCache = new Map();
   /** @type {Set<string>} */
@@ -23,185 +25,106 @@
   /** @type {Map<string, object>} */
   const jobStore = new Map();
   let pollTimer = null;
-  let panelsCollapsed = false;
-  let jobFocusIndex = 0;
-  let pollPaused = false;
 
   /** @type {'dir'|'file'} */
   let fsPickMode = "dir";
   /** @type {'music'|'cookie'|null} */
   let fsTarget = null;
-  /** @type {{ path: string, parent: string|null, entries: {name:string,path:string,is_dir?:boolean}[], selectedIsDir?: boolean }} */
+  /** @type {{ path: string, parent: string|null, entries: object[], selectedIsDir?: boolean }} */
   let fsState = { path: "", parent: null, entries: [], selectedIsDir: true };
 
+  /** @type {object[]} */
+  let savedPlaylists = [];
+  /** @type {object[]} */
+  let syncQueue = [];
+  /** @type {object|null} */
+  let lastImportResult = null;
   /** @type {{ title: string, entries: object[] } | null} */
   let loadedPlaylist = null;
+  /** @type {string} */
+  let currentScreen = "home";
+
+  const $ = (id) => document.getElementById(id);
 
   const els = {
-    statusLcd: document.getElementById("statusLcd"),
-    lcdBitrate: document.getElementById("lcdBitrate"),
-    plFooterTime: document.getElementById("plFooterTime"),
-    viz: document.getElementById("viz"),
-    panelsRoot: document.querySelector(".panels"),
-    modeBtns: [...document.querySelectorAll(".mode-btn")],
-    panels: {
-      search: document.getElementById("panel-search"),
-      link: document.getElementById("panel-link"),
-      playlist: document.getElementById("panel-playlist"),
-      settings: document.getElementById("panel-settings"),
-    },
-    searchInput: document.getElementById("searchInput"),
-    searchBtn: document.getElementById("searchBtn"),
-    searchDownloadBtn: document.getElementById("searchDownloadBtn"),
-    searchResults: document.getElementById("searchResults"),
-    linkInput: document.getElementById("linkInput"),
-    linkDownloadBtn: document.getElementById("linkDownloadBtn"),
-    playlistInput: document.getElementById("playlistInput"),
-    playlistLoadBtn: document.getElementById("playlistLoadBtn"),
-    playlistSelectAllBtn: document.getElementById("playlistSelectAllBtn"),
-    playlistSelectNoneBtn: document.getElementById("playlistSelectNoneBtn"),
-    playlistDownloadBtn: document.getElementById("playlistDownloadBtn"),
-    playlistTitle: document.getElementById("playlistTitle"),
-    playlistResults: document.getElementById("playlistResults"),
-    setConcurrency: document.getElementById("setConcurrency"),
-    setSearchCount: document.getElementById("setSearchCount"),
-    setFilename: document.getElementById("setFilename"),
-    setBitrate: document.getElementById("setBitrate"),
-    setPlaylistSubfolder: document.getElementById("setPlaylistSubfolder"),
-    setEmbedMetadata: document.getElementById("setEmbedMetadata"),
-    setMusicDir: document.getElementById("setMusicDir"),
-    setCookieFile: document.getElementById("setCookieFile"),
-    setCookiesBrowser: document.getElementById("setCookiesBrowser"),
-    setCheckDuplicates: document.getElementById("setCheckDuplicates"),
-    browseMusicDirBtn: document.getElementById("browseMusicDirBtn"),
-    browseCookieBtn: document.getElementById("browseCookieBtn"),
-    settingsSaveBtn: document.getElementById("settingsSaveBtn"),
-    settingsResetBtn: document.getElementById("settingsResetBtn"),
-    jobsList: document.getElementById("jobsList"),
-    listBody: document.getElementById("listBody"),
-    dupModal: document.getElementById("dupModal"),
-    dupList: document.getElementById("dupList"),
-    dupSkipBtn: document.getElementById("dupSkipBtn"),
-    dupAllBtn: document.getElementById("dupAllBtn"),
-    dupCancelBtn: document.getElementById("dupCancelBtn"),
-    fsModal: document.getElementById("fsModal"),
-    fsList: document.getElementById("fsList"),
-    fsCurrentPath: document.getElementById("fsCurrentPath"),
-    fsUpBtn: document.getElementById("fsUpBtn"),
-    fsSelectBtn: document.getElementById("fsSelectBtn"),
-    fsCancelBtn: document.getElementById("fsCancelBtn"),
-    trPrev: document.getElementById("trPrev"),
-    trPlay: document.getElementById("trPlay"),
-    trPause: document.getElementById("trPause"),
-    trStop: document.getElementById("trStop"),
-    trNext: document.getElementById("trNext"),
-    trEject: document.getElementById("trEject"),
-    footAdd: document.getElementById("footAdd"),
-    footRem: document.getElementById("footRem"),
-    footSel: document.getElementById("footSel"),
-    footMisc: document.getElementById("footMisc"),
-    footListOpts: document.getElementById("footListOpts"),
-    winMinBtn: document.getElementById("winMinBtn"),
-    winFocusBtn: document.getElementById("winFocusBtn"),
-    winReadyBtn: document.getElementById("winReadyBtn"),
-    plWinMinBtn: document.getElementById("plWinMinBtn"),
-    plWinFocusBtn: document.getElementById("plWinFocusBtn"),
-    plWinReadyBtn: document.getElementById("plWinReadyBtn"),
+    brandHomeBtn: $("brandHomeBtn"),
+    navHomeBtn: $("navHomeBtn"),
+    jobsToggleBtn: $("jobsToggleBtn"),
+    jobsBadge: $("jobsBadge"),
+    jobsPanel: $("jobsPanel"),
+    jobsBackdrop: $("jobsBackdrop"),
+    jobsCloseBtn: $("jobsCloseBtn"),
+    jobsStatusLine: $("jobsStatusLine"),
+    jobsList: $("jobsList"),
+    clearJobsBtn: $("clearJobsBtn"),
+    homeDuePill: $("homeDuePill"),
+    homeQueuePill: $("homeQueuePill"),
+    searchInput: $("searchInput"),
+    searchBtn: $("searchBtn"),
+    searchDownloadBtn: $("searchDownloadBtn"),
+    searchResults: $("searchResults"),
+    searchAlert: $("searchAlert"),
+    linkInput: $("linkInput"),
+    linkDownloadBtn: $("linkDownloadBtn"),
+    linkAlert: $("linkAlert"),
+    plDlInput: $("plDlInput"),
+    plDlLoadBtn: $("plDlLoadBtn"),
+    plDlSelectAllBtn: $("plDlSelectAllBtn"),
+    plDlSelectNoneBtn: $("plDlSelectNoneBtn"),
+    plDlDownloadBtn: $("plDlDownloadBtn"),
+    plDlTitle: $("plDlTitle"),
+    plDlResults: $("plDlResults"),
+    plDlAlert: $("plDlAlert"),
+    syncAlert: $("syncAlert"),
+    syncDueHint: $("syncDueHint"),
+    syncAddInput: $("syncAddInput"),
+    syncAddBtn: $("syncAddBtn"),
+    syncDueBtn: $("syncDueBtn"),
+    syncAllBtn: $("syncAllBtn"),
+    savedPlaylists: $("savedPlaylists"),
+    syncQueueResults: $("syncQueueResults"),
+    syncSelectAllBtn: $("syncSelectAllBtn"),
+    syncSelectNoneBtn: $("syncSelectNoneBtn"),
+    syncDownloadSelectedBtn: $("syncDownloadSelectedBtn"),
+    syncDownloadAllBtn: $("syncDownloadAllBtn"),
+    syncDismissBtn: $("syncDismissBtn"),
+    libAlert: $("libAlert"),
+    libDryRunBtn: $("libDryRunBtn"),
+    libApplyBtn: $("libApplyBtn"),
+    libraryReport: $("libraryReport"),
+    settingsAlert: $("settingsAlert"),
+    setConcurrency: $("setConcurrency"),
+    setSearchCount: $("setSearchCount"),
+    setFilename: $("setFilename"),
+    setBitrate: $("setBitrate"),
+    setSyncInterval: $("setSyncInterval"),
+    setMusicDir: $("setMusicDir"),
+    setCookieFile: $("setCookieFile"),
+    setCookiesBrowser: $("setCookiesBrowser"),
+    setPlaylistSubfolder: $("setPlaylistSubfolder"),
+    setEmbedMetadata: $("setEmbedMetadata"),
+    setCheckDuplicates: $("setCheckDuplicates"),
+    browseMusicDirBtn: $("browseMusicDirBtn"),
+    browseCookieBtn: $("browseCookieBtn"),
+    settingsSaveBtn: $("settingsSaveBtn"),
+    settingsResetBtn: $("settingsResetBtn"),
+    dupModal: $("dupModal"),
+    dupList: $("dupList"),
+    dupSkipBtn: $("dupSkipBtn"),
+    dupAllBtn: $("dupAllBtn"),
+    dupCancelBtn: $("dupCancelBtn"),
+    fsModal: $("fsModal"),
+    fsList: $("fsList"),
+    fsCurrentPath: $("fsCurrentPath"),
+    fsUpBtn: $("fsUpBtn"),
+    fsSelectBtn: $("fsSelectBtn"),
+    fsCancelBtn: $("fsCancelBtn"),
   };
-
-  function loadSettings() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return { ...DEFAULTS };
-      return { ...DEFAULTS, ...JSON.parse(raw) };
-    } catch {
-      return { ...DEFAULTS };
-    }
-  }
-
-  function saveSettings(next) {
-    settings = { ...DEFAULTS, ...next };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-  }
-
-  function fillSettingsForm() {
-    els.setConcurrency.value = String(settings.concurrency);
-    els.setSearchCount.value = String(settings.searchResultCount);
-    els.setFilename.value = settings.filenameTemplate;
-    els.setBitrate.value = String(settings.audioBitrate);
-    els.setMusicDir.value = settings.musicDir || "";
-    els.setCookieFile.value = settings.cookieFile || "";
-    els.setCookiesBrowser.value = settings.cookiesFromBrowser || "";
-    els.setPlaylistSubfolder.checked = !!settings.playlistSubfolder;
-    els.setEmbedMetadata.checked = !!settings.embedMetadata;
-    els.setCheckDuplicates.checked = !!settings.checkDuplicates;
-  }
-
-  function readSettingsForm() {
-    return {
-      concurrency: clampInt(els.setConcurrency.value, 1, 10, DEFAULTS.concurrency),
-      searchResultCount: clampInt(els.setSearchCount.value, 1, 20, DEFAULTS.searchResultCount),
-      filenameTemplate: els.setFilename.value || DEFAULTS.filenameTemplate,
-      audioBitrate: clampInt(els.setBitrate.value, 64, 320, DEFAULTS.audioBitrate),
-      musicDir: (els.setMusicDir.value || "").trim(),
-      cookieFile: (els.setCookieFile.value || "").trim(),
-      cookiesFromBrowser: (els.setCookiesBrowser.value || "").trim(),
-      playlistSubfolder: els.setPlaylistSubfolder.checked,
-      embedMetadata: els.setEmbedMetadata.checked,
-      checkDuplicates: els.setCheckDuplicates.checked,
-    };
-  }
 
   function clampInt(value, min, max, fallback) {
     const n = Number.parseInt(String(value), 10);
     if (Number.isNaN(n)) return fallback;
     return Math.min(max, Math.max(min, n));
-  }
-
-  function setLcd(text) {
-    els.statusLcd.innerHTML = `<span class="lcd-line">${escapeHtml(text)}</span>`;
-  }
-
-  function syncBitrateDisplay() {
-    if (els.lcdBitrate) els.lcdBitrate.textContent = String(settings.audioBitrate);
-  }
-
-  function updateFooterTime() {
-    if (!els.plFooterTime) return;
-    let total = 0;
-    let done = 0;
-    for (const job of jobStore.values()) {
-      total += job.items.length;
-      done += job.items.filter((i) => i.status === "done").length;
-    }
-    els.plFooterTime.textContent = `${done}:00 / ${total}:00`;
-  }
-
-  function startVisualizer() {
-    const canvas = els.viz;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    const bars = 16;
-    const values = Array.from({ length: bars }, () => Math.random());
-
-    function frame() {
-      const busy = activeJobs.size > 0 && !pollPaused;
-      for (let i = 0; i < bars; i++) {
-        const target = busy ? 0.2 + Math.random() * 0.8 : 0.05 + Math.random() * 0.25;
-        values[i] += (target - values[i]) * 0.35;
-      }
-      ctx.fillStyle = "#000";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      const gap = 1;
-      const w = (canvas.width - gap * (bars - 1)) / bars;
-      for (let i = 0; i < bars; i++) {
-        const h = Math.max(1, Math.floor(values[i] * canvas.height));
-        ctx.fillStyle = "#00ef00";
-        ctx.fillRect(i * (w + gap), canvas.height - h, w, h);
-      }
-      requestAnimationFrame(frame);
-    }
-    requestAnimationFrame(frame);
   }
 
   function escapeHtml(str) {
@@ -238,35 +161,52 @@
     return data;
   }
 
-  function switchMode(mode) {
-    els.modeBtns.forEach((btn) => {
-      const active = btn.dataset.mode === mode;
-      btn.classList.toggle("active", active);
-      btn.setAttribute("aria-selected", active ? "true" : "false");
+  function showAlert(el, message, kind = "info") {
+    if (!el) return;
+    el.hidden = !message;
+    el.classList.remove("is-error", "is-ok", "is-info");
+    if (!message) return;
+    el.textContent = message;
+    el.classList.add(kind === "error" ? "is-error" : kind === "ok" ? "is-ok" : "is-info");
+  }
+
+  function goHome() {
+    showScreen("home");
+    refreshHomeBadges();
+  }
+
+  function showScreen(name) {
+    currentScreen = name;
+    document.querySelectorAll(".screen").forEach((screen) => {
+      const match = screen.dataset.screen === name;
+      screen.hidden = !match;
+      screen.classList.toggle("active", match);
     });
-    Object.entries(els.panels).forEach(([key, panel]) => {
-      const show = key === mode;
-      panel.hidden = !show;
-      panel.classList.toggle("active", show);
-    });
-    if (panelsCollapsed && els.panelsRoot) {
-      panelsCollapsed = false;
-      els.panelsRoot.classList.remove("collapsed");
+    if (name === "sync") {
+      renderSavedPlaylists();
+      renderSyncQueue();
+    } else if (name === "library") {
+      renderLibraryReport();
+    } else if (name === "settings") {
+      fillSettingsForm();
+    } else if (name === "home") {
+      refreshHomeBadges();
     }
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function cookiePayload() {
-    return settings.cookieFile || null;
-  }
-
-  function cookiesBrowserPayload() {
-    return settings.cookiesFromBrowser || null;
+  function openJobsPanel(open = true) {
+    els.jobsPanel.hidden = !open;
+    els.jobsBackdrop.hidden = !open;
+    els.jobsToggleBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    els.jobsToggleBtn.classList.toggle("is-active", open);
+    if (open) renderJobs();
   }
 
   function authPayload() {
     return {
-      cookiefile: cookiePayload(),
-      cookies_from_browser: cookiesBrowserPayload(),
+      cookiefile: settings.cookieFile || null,
+      cookies_from_browser: settings.cookiesFromBrowser || null,
     };
   }
 
@@ -282,8 +222,69 @@
     };
   }
 
-  function hideDupModal() {
-    els.dupModal.hidden = true;
+  function fillSettingsForm() {
+    els.setConcurrency.value = String(settings.concurrency);
+    els.setSearchCount.value = String(settings.searchResultCount);
+    els.setFilename.value = settings.filenameTemplate;
+    els.setBitrate.value = String(settings.audioBitrate);
+    els.setSyncInterval.value = String(settings.syncIntervalDays || 7);
+    els.setMusicDir.value = settings.musicDir || "";
+    els.setCookieFile.value = settings.cookieFile || "";
+    els.setCookiesBrowser.value = settings.cookiesFromBrowser || "";
+    els.setPlaylistSubfolder.checked = !!settings.playlistSubfolder;
+    els.setEmbedMetadata.checked = !!settings.embedMetadata;
+    els.setCheckDuplicates.checked = !!settings.checkDuplicates;
+  }
+
+  function readSettingsForm() {
+    return {
+      concurrency: clampInt(els.setConcurrency.value, 1, 10, DEFAULTS.concurrency),
+      searchResultCount: clampInt(els.setSearchCount.value, 1, 20, DEFAULTS.searchResultCount),
+      filenameTemplate: els.setFilename.value || DEFAULTS.filenameTemplate,
+      audioBitrate: clampInt(els.setBitrate.value, 64, 320, DEFAULTS.audioBitrate),
+      syncIntervalDays: clampInt(els.setSyncInterval.value, 1, 365, DEFAULTS.syncIntervalDays),
+      musicDir: (els.setMusicDir.value || "").trim(),
+      cookieFile: (els.setCookieFile.value || "").trim(),
+      cookiesFromBrowser: (els.setCookiesBrowser.value || "").trim(),
+      playlistSubfolder: els.setPlaylistSubfolder.checked,
+      embedMetadata: els.setEmbedMetadata.checked,
+      checkDuplicates: els.setCheckDuplicates.checked,
+    };
+  }
+
+  async function loadSettingsFromServer() {
+    const remote = await api("/api/settings");
+    settings = { ...DEFAULTS, ...remote };
+  }
+
+  async function saveSettingsToServer(next) {
+    const remote = await api("/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({ ...DEFAULTS, ...next }),
+    });
+    settings = { ...DEFAULTS, ...remote };
+  }
+
+  async function migrateLocalStorageIfNeeded() {
+    if (localStorage.getItem(MIGRATED_KEY) === "1") return;
+    let local = null;
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) local = JSON.parse(raw);
+    } catch {
+      local = null;
+    }
+    if (local && typeof local === "object") {
+      const remote = await api("/api/settings");
+      const looksDefault =
+        (!remote.musicDir || remote.musicDir === DEFAULTS.musicDir) &&
+        !remote.cookieFile &&
+        !remote.cookiesFromBrowser;
+      if (looksDefault) {
+        await saveSettingsToServer({ ...DEFAULTS, ...remote, ...local });
+      }
+    }
+    localStorage.setItem(MIGRATED_KEY, "1");
   }
 
   function confirmDuplicates(duplicates) {
@@ -297,13 +298,12 @@
         })
         .join("");
       els.dupModal.hidden = false;
-      setLcd(`DUPLICATES · ${duplicates.length} FOUND`);
 
       const cleanup = () => {
         els.dupSkipBtn.removeEventListener("click", onSkip);
         els.dupAllBtn.removeEventListener("click", onAll);
         els.dupCancelBtn.removeEventListener("click", onCancel);
-        hideDupModal();
+        els.dupModal.hidden = true;
       };
       const onSkip = () => {
         cleanup();
@@ -323,12 +323,12 @@
     });
   }
 
-  async function queueDownload(items, outputSubdir, label) {
+  async function queueDownload(items, outputSubdir, label, alertEl) {
     if (!items.length) {
-      setLcd("NOTHING TO DOWNLOAD");
+      showAlert(alertEl, "Nothing to download.", "error");
       return;
     }
-    setLcd(`QUEUING · ${items.length} TRACK(S)`);
+    showAlert(alertEl, `Queuing ${items.length} track(s)…`, "info");
     try {
       const data = await api("/api/download", {
         method: "POST",
@@ -336,19 +336,21 @@
       });
       activeJobs.add(data.job_id);
       playlistCache.set(data.job_id, { title: label || "Download" });
-      setLcd(`JOB STARTED · ${data.job_id.slice(0, 8)}`);
+      updateJobsChrome();
+      openJobsPanel(true);
       ensurePolling();
       await refreshJob(data.job_id);
+      showAlert(alertEl, `Download started (${items.length} track(s)).`, "ok");
     } catch (err) {
-      setLcd(`ERROR · ${err.message}`);
+      showAlert(alertEl, err.message, "error");
     }
   }
 
-  async function startDownload(items, outputSubdir, label) {
+  async function startDownload(items, outputSubdir, label, alertEl) {
     if (!items.length) return;
 
     if (settings.checkDuplicates) {
-      setLcd("CHECKING LIBRARY…");
+      showAlert(alertEl, "Checking library for duplicates…", "info");
       try {
         const check = await api("/api/check-duplicates", {
           method: "POST",
@@ -360,34 +362,34 @@
         if (check.duplicates && check.duplicates.length) {
           const choice = await confirmDuplicates(check.duplicates);
           if (choice === "cancel") {
-            setLcd("DOWNLOAD CANCELLED");
+            showAlert(alertEl, "Download cancelled.", "info");
             return;
           }
           if (choice === "skip") {
             const dupUrls = new Set(check.duplicates.map((d) => d.url));
             items = items.filter((it) => !dupUrls.has(it.url));
             if (!items.length) {
-              setLcd("ALL SKIPPED · DUPES ONLY");
+              showAlert(alertEl, "All selected tracks were duplicates — nothing to download.", "info");
               return;
             }
           }
         }
       } catch (err) {
-        setLcd(`DUP CHECK ERROR · ${err.message}`);
+        showAlert(alertEl, `Duplicate check failed: ${err.message}`, "error");
         return;
       }
     }
 
-    await queueDownload(items, outputSubdir, label);
+    await queueDownload(items, outputSubdir, label, alertEl);
   }
 
   function ensurePolling() {
     if (pollTimer) return;
     pollTimer = setInterval(async () => {
-      if (pollPaused) return;
       if (!activeJobs.size) {
         clearInterval(pollTimer);
         pollTimer = null;
+        updateJobsChrome();
         return;
       }
       for (const jobId of [...activeJobs]) {
@@ -401,18 +403,40 @@
       const job = await api(`/api/jobs/${jobId}`);
       jobStore.set(jobId, job);
       renderJobs();
+      updateJobsChrome();
       if (job.status === "done" || job.status === "failed") {
         activeJobs.delete(jobId);
-        const failed = job.items.filter((i) => i.status === "failed").length;
-        const done = job.items.filter((i) => i.status === "done").length;
-        setLcd(
-          job.status === "failed"
-            ? `JOB FAILED · ${failed} ERROR(S)`
-            : `DONE · ${done} OK${failed ? ` · ${failed} FAIL` : ""}`
-        );
+        updateJobsChrome();
       }
     } catch (err) {
-      setLcd(`JOB ERROR · ${err.message}`);
+      els.jobsStatusLine.textContent = `Job error: ${err.message}`;
+    }
+  }
+
+  function updateJobsChrome() {
+    const active = activeJobs.size;
+    const totalItems = [...jobStore.values()].reduce((n, j) => n + j.items.length, 0);
+    const doneItems = [...jobStore.values()].reduce(
+      (n, j) => n + j.items.filter((i) => i.status === "done").length,
+      0
+    );
+
+    if (active > 0) {
+      els.jobsBadge.hidden = false;
+      els.jobsBadge.textContent = String(active);
+      els.jobsToggleBtn.classList.add("has-active-jobs");
+      els.jobsStatusLine.textContent = `${active} job(s) running · ${doneItems}/${totalItems} tracks done`;
+    } else {
+      els.jobsBadge.hidden = totalItems === 0;
+      if (totalItems > 0) {
+        els.jobsBadge.hidden = false;
+        els.jobsBadge.textContent = String(jobStore.size);
+      }
+      els.jobsToggleBtn.classList.remove("has-active-jobs");
+      els.jobsStatusLine.textContent =
+        totalItems > 0
+          ? `${doneItems}/${totalItems} tracks finished · ${jobStore.size} job(s) in list`
+          : "No active downloads.";
     }
   }
 
@@ -431,50 +455,41 @@
   }
 
   async function retrySameUrl(item) {
-    await startDownload([{ url: item.url, title: item.title || null }], null, "Retry");
+    openJobsPanel(true);
+    await startDownload([{ url: item.url, title: item.title || null }], null, "Retry", null);
   }
 
   async function retryViaSearch(item) {
     const query = (item.title || "").trim();
     if (!query) {
-      setLcd("NO TITLE TO SEARCH");
+      els.jobsStatusLine.textContent = "No title to search.";
       return;
     }
-    setLcd(`RESEARCH · ${query.slice(0, 28)}`);
+    els.jobsStatusLine.textContent = `Re-searching: ${query.slice(0, 40)}…`;
     try {
       const data = await api("/api/search", {
         method: "POST",
-        body: JSON.stringify({
-          queries: [query],
-          limit: 5,
-          ...authPayload(),
-        }),
+        body: JSON.stringify({ queries: [query], limit: 5, ...authPayload() }),
       });
       const first = data.results?.[0]?.candidates?.[0];
       if (!first) {
-        setLcd("NO SEARCH MATCH");
+        els.jobsStatusLine.textContent = "No search match.";
         return;
       }
-      setLcd(`FOUND · ${first.title.slice(0, 28)}`);
-      await startDownload(
-        [{ url: first.url, title: first.title }],
-        null,
-        "Retry search"
-      );
+      await startDownload([{ url: first.url, title: first.title }], null, "Retry search", null);
     } catch (err) {
-      setLcd(`SEARCH RETRY · ${err.message}`);
+      els.jobsStatusLine.textContent = `Search retry failed: ${err.message}`;
     }
   }
 
   function renderJobs() {
     if (!jobStore.size) {
-      els.jobsList.innerHTML = `<p class="empty-hint">0. — empty list —</p>`;
-      updateFooterTime();
+      els.jobsList.innerHTML = `<p class="empty">No jobs yet.</p>`;
       return;
     }
-    const blocks = [...jobStore.entries()]
+    els.jobsList.innerHTML = [...jobStore.entries()]
       .reverse()
-      .map(([jobId, job], blockIdx) => {
+      .map(([jobId, job]) => {
         const meta = playlistCache.get(jobId);
         const head = meta?.title || `Job ${jobId.slice(0, 8)}`;
         const itemsHtml = job.items
@@ -484,27 +499,27 @@
             const failed = item.status === "failed";
             const actions = failed
               ? `<div class="job-actions">
-                  <button type="button" class="bevel-btn retry-same" data-job="${escapeHtml(
+                  <button type="button" class="btn btn-secondary retry-same" data-job="${escapeHtml(
                     jobId
-                  )}" data-idx="${idx}">RETRY</button>
-                  <button type="button" class="bevel-btn retry-search" data-job="${escapeHtml(
+                  )}" data-idx="${idx}">Retry</button>
+                  <button type="button" class="btn btn-secondary retry-search" data-job="${escapeHtml(
                     jobId
-                  )}" data-idx="${idx}" title="Find another YouTube upload">RE-SEARCH</button>
+                  )}" data-idx="${idx}">Re-search</button>
                 </div>`
               : "";
             const hint =
               failed && isAgeGateError(item.error)
-                ? `<div class="error-text">Tip: EQ → cookies from browser (logged into YouTube), then RETRY</div>`
+                ? `<div class="error-text">Tip: Settings → cookies from browser (logged into YouTube), then Retry</div>`
                 : failed && isForbiddenError(item.error)
-                  ? `<div class="error-text">Tip: EQ → cookies from browser or cookies.txt, then RETRY</div>`
+                  ? `<div class="error-text">Tip: set cookies in Settings, then Retry</div>`
                   : failed && isUnavailableError(item.error)
-                    ? `<div class="error-text">Tip: use RE-SEARCH for a new upload</div>`
+                    ? `<div class="error-text">Tip: use Re-search for another upload</div>`
                     : "";
             return `
               <div class="job-item">
                 <div class="job-item-top">
                   <span>${idx + 1}. ${escapeHtml(title)}</span>
-                  <span class="status-${item.status}">${item.status.toUpperCase()}${
+                  <span class="status-${item.status}">${item.status}${
               item.status === "downloading" ? ` ${pct}%` : ""
             }</span>
                 </div>
@@ -516,20 +531,17 @@
             `;
           })
           .join("");
-        const activeClass = blockIdx === jobFocusIndex ? " active-job" : "";
         return `
-          <div class="job-block${activeClass}" data-job="${escapeHtml(jobId)}">
+          <div class="job-block">
             <div class="job-head">
               <span>${escapeHtml(head)}</span>
-              <span>${job.status.toUpperCase()}</span>
+              <span>${job.status}</span>
             </div>
             ${itemsHtml}
           </div>
         `;
       })
       .join("");
-    els.jobsList.innerHTML = blocks;
-    updateFooterTime();
 
     els.jobsList.querySelectorAll(".retry-same").forEach((btn) => {
       btn.addEventListener("click", async () => {
@@ -547,25 +559,6 @@
     });
   }
 
-  function focusJobList() {
-    els.listBody?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    highlightJobBlock(jobFocusIndex);
-    setLcd("JOB LIST FOCUSED");
-  }
-
-  function highlightJobBlock(index) {
-    const blocks = [...els.jobsList.querySelectorAll(".job-block")];
-    if (!blocks.length) {
-      setLcd("NO JOBS");
-      return;
-    }
-    jobFocusIndex = ((index % blocks.length) + blocks.length) % blocks.length;
-    blocks.forEach((el, i) => el.classList.toggle("active-job", i === jobFocusIndex));
-    blocks[jobFocusIndex].scrollIntoView({ behavior: "smooth", block: "nearest" });
-    const label = blocks[jobFocusIndex].querySelector(".job-head span")?.textContent || "JOB";
-    setLcd(`JOB · ${label}`);
-  }
-
   function clearSettledJobs() {
     for (const [jobId, job] of [...jobStore.entries()]) {
       if (job.status === "done" || job.status === "failed") {
@@ -574,59 +567,272 @@
         activeJobs.delete(jobId);
       }
     }
-    jobFocusIndex = 0;
     renderJobs();
-    setLcd("CLEARED SETTLED JOBS");
+    updateJobsChrome();
   }
 
-  function togglePanels() {
-    panelsCollapsed = !panelsCollapsed;
-    els.panelsRoot?.classList.toggle("collapsed", panelsCollapsed);
-    setLcd(panelsCollapsed ? "PANELS HIDDEN" : "PANELS SHOWN");
-  }
-
-  function selectAllPlaylist() {
-    if (els.playlistResults.hidden) {
-      setLcd("NO PLAYLIST LOADED");
-      return;
-    }
-    els.playlistResults.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
-      cb.checked = true;
-    });
-    switchMode("playlist");
-    setLcd("SELECTED ALL TRACKS");
-  }
-
-  // --- Search ---
-  els.searchBtn.addEventListener("click", async () => {
-    const lines = els.searchInput.value
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter(Boolean);
-    if (!lines.length) {
-      setLcd("ENTER AT LEAST ONE SONG");
-      return;
-    }
-    els.searchBtn.disabled = true;
-    setLcd(`SEARCHING · ${lines.length} QUER${lines.length === 1 ? "Y" : "IES"}`);
+  async function refreshHomeBadges() {
     try {
-      const data = await api("/api/search", {
+      const status = await api("/api/sync/status");
+      if (status.dueCount > 0) {
+        els.homeDuePill.hidden = false;
+        els.homeDuePill.textContent = `${status.dueCount} due`;
+      } else {
+        els.homeDuePill.hidden = true;
+      }
+      if (status.queueCount > 0) {
+        els.homeQueuePill.hidden = false;
+        els.homeQueuePill.textContent = `${status.queueCount} in queue`;
+      } else {
+        els.homeQueuePill.hidden = true;
+      }
+    } catch {
+      /* ignore on home */
+    }
+  }
+
+  function daysSince(iso) {
+    if (!iso) return Infinity;
+    const t = Date.parse(iso);
+    if (Number.isNaN(t)) return Infinity;
+    return (Date.now() - t) / 86400000;
+  }
+
+  function playlistDue(pl) {
+    return daysSince(pl.lastSyncedAt) >= (settings.syncIntervalDays || 7);
+  }
+
+  async function refreshPlaylists() {
+    savedPlaylists = await api("/api/playlists");
+    if (currentScreen === "sync") renderSavedPlaylists();
+    updateSyncDueHint();
+  }
+
+  async function refreshSyncQueue() {
+    syncQueue = await api("/api/sync/queue");
+    if (currentScreen === "sync") renderSyncQueue();
+    updateSyncQueueButtons();
+  }
+
+  function updateSyncDueHint() {
+    const due = savedPlaylists.filter(playlistDue).length;
+    if (!els.syncDueHint) return;
+    els.syncDueHint.textContent =
+      savedPlaylists.length === 0
+        ? "Add a playlist URL to monitor."
+        : `${savedPlaylists.length} saved · ${due} due (every ${settings.syncIntervalDays} days) · ${syncQueue.length} missing in queue`;
+  }
+
+  function updateSyncQueueButtons() {
+    const has = syncQueue.length > 0;
+    els.syncSelectAllBtn.disabled = !has;
+    els.syncSelectNoneBtn.disabled = !has;
+    els.syncDownloadSelectedBtn.disabled = !has;
+    els.syncDownloadAllBtn.disabled = !has;
+    els.syncDismissBtn.disabled = !has;
+  }
+
+  function renderSavedPlaylists() {
+    updateSyncDueHint();
+    if (!savedPlaylists.length) {
+      els.savedPlaylists.innerHTML = `<p class="empty">No saved playlists yet.</p>`;
+      return;
+    }
+    els.savedPlaylists.innerHTML = savedPlaylists
+      .map((pl) => {
+        const due = playlistDue(pl);
+        const last = pl.lastSyncedAt
+          ? new Date(pl.lastSyncedAt).toLocaleDateString()
+          : "never";
+        return `
+          <div class="saved-row">
+            <div>
+              <strong>${escapeHtml(pl.title || "Playlist")}</strong>
+              <div class="meta">${escapeHtml(pl.source || "?")} · last sync ${escapeHtml(last)}${
+          due ? ` <span class="due-tag">due</span>` : ""
+        }</div>
+            </div>
+            <div class="saved-row-actions">
+              <button type="button" class="btn btn-secondary pl-sync-one" data-id="${escapeHtml(
+                pl.id
+              )}">Sync</button>
+              <button type="button" class="btn btn-ghost pl-remove" data-id="${escapeHtml(
+                pl.id
+              )}">Remove</button>
+            </div>
+          </div>
+        `;
+      })
+      .join("");
+
+    els.savedPlaylists.querySelectorAll(".pl-sync-one").forEach((btn) => {
+      btn.addEventListener("click", () => runSync({ playlistIds: [btn.dataset.id] }));
+    });
+    els.savedPlaylists.querySelectorAll(".pl-remove").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          await api(`/api/playlists/${encodeURIComponent(btn.dataset.id)}`, {
+            method: "DELETE",
+          });
+          showAlert(els.syncAlert, "Playlist removed.", "ok");
+          await refreshPlaylists();
+          await refreshSyncQueue();
+          refreshHomeBadges();
+        } catch (err) {
+          showAlert(els.syncAlert, err.message, "error");
+        }
+      });
+    });
+  }
+
+  function renderSyncQueue() {
+    updateSyncQueueButtons();
+    if (!syncQueue.length) {
+      els.syncQueueResults.innerHTML = `<p class="empty">Queue is empty. Run Sync due or Sync all after saving playlists.</p>`;
+      return;
+    }
+    els.syncQueueResults.innerHTML = syncQueue
+      .map((item, i) => {
+        const label = [item.artists, item.title].filter(Boolean).join(" - ") || item.url;
+        const pl = item.playlistTitle ? ` · ${item.playlistTitle}` : "";
+        return `
+          <label class="track-row">
+            <input type="checkbox" name="syncq" value="${escapeHtml(item.id)}" checked />
+            <span>${i + 1}. ${escapeHtml(label)}<span class="meta">${escapeHtml(pl)}</span></span>
+            <span></span>
+          </label>
+        `;
+      })
+      .join("");
+  }
+
+  function flashSyncQueue() {
+    const section = document.querySelector(".sync-section-queue");
+    if (!section) return;
+    section.classList.remove("is-updated");
+    void section.offsetWidth;
+    section.classList.add("is-updated");
+  }
+
+  async function runSync({ playlistIds = null, onlyDue = false } = {}) {
+    showAlert(els.syncAlert, onlyDue ? "Syncing due playlists…" : "Syncing playlists…", "info");
+    try {
+      const result = await api("/api/playlists/sync", {
         method: "POST",
         body: JSON.stringify({
-          queries: lines,
-          limit: settings.searchResultCount,
+          onlyDue: !!onlyDue,
+          playlistIds: playlistIds || null,
           ...authPayload(),
         }),
       });
-      renderSearchResults(data.results);
-      setLcd(`FOUND · PICK MATCHES`);
+      syncQueue = result.queue || [];
+      await refreshPlaylists();
+      renderSyncQueue();
+      flashSyncQueue();
+      refreshHomeBadges();
+      const errN = (result.errors || []).length;
+      showAlert(
+        els.syncAlert,
+        `Found ${result.missingCount} missing track(s). Queue now has ${syncQueue.length}.${
+          errN ? ` ${errN} playlist error(s).` : ""
+        }`,
+        errN ? "error" : "ok"
+      );
     } catch (err) {
-      setLcd(`SEARCH ERROR · ${err.message}`);
-    } finally {
-      els.searchBtn.disabled = false;
+      showAlert(els.syncAlert, err.message, "error");
     }
-  });
+  }
 
+  async function downloadFromSync({ all = false } = {}) {
+    let ids = null;
+    if (!all) {
+      ids = [...els.syncQueueResults.querySelectorAll('input[type="checkbox"]:checked')].map(
+        (cb) => cb.value
+      );
+      if (!ids.length) {
+        showAlert(els.syncAlert, "Select at least one track.", "error");
+        return;
+      }
+    }
+    showAlert(els.syncAlert, all ? "Starting download for all…" : "Starting download…", "info");
+    try {
+      const data = await api("/api/sync/download", {
+        method: "POST",
+        body: JSON.stringify({
+          all: !!all,
+          ids,
+          concurrency: settings.concurrency,
+          embed_metadata: settings.embedMetadata,
+          audio_bitrate: settings.audioBitrate,
+          filename_template: settings.filenameTemplate,
+          ...authPayload(),
+        }),
+      });
+      activeJobs.add(data.job_id);
+      playlistCache.set(data.job_id, { title: "Sync download" });
+      await refreshSyncQueue();
+      refreshHomeBadges();
+      openJobsPanel(true);
+      ensurePolling();
+      await refreshJob(data.job_id);
+      showAlert(els.syncAlert, "Download started from sync queue.", "ok");
+    } catch (err) {
+      showAlert(els.syncAlert, err.message, "error");
+    }
+  }
+
+  function renderLibraryReport() {
+    if (!lastImportResult) {
+      els.libraryReport.innerHTML = `<p class="empty">Run a dry run to preview moves into your music folder.</p>`;
+      els.libApplyBtn.disabled = true;
+      return;
+    }
+    const c = lastImportResult.counts || {};
+    const summary = Object.entries(c)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(" · ");
+    const mode = lastImportResult.dry_run ? "Dry run" : "Applied";
+    const lines = (lastImportResult.lines || []).slice(-100);
+    els.libraryReport.innerHTML = `
+      <div class="track-group">
+        <p class="track-group-title">${mode} · ${escapeHtml(summary)}</p>
+        <pre class="import-log">${escapeHtml(lines.join("\n"))}</pre>
+      </div>
+    `;
+    els.libApplyBtn.disabled = !lastImportResult.dry_run || !(c.scanned > 0);
+  }
+
+  async function runLibraryImport(dryRun) {
+    showAlert(els.libAlert, dryRun ? "Running dry run…" : "Applying import…", "info");
+    els.libDryRunBtn.disabled = true;
+    els.libApplyBtn.disabled = true;
+    try {
+      const result = await api("/api/library/import", {
+        method: "POST",
+        body: JSON.stringify({
+          dryRun: !!dryRun,
+          musicDir: settings.musicDir || null,
+        }),
+      });
+      lastImportResult = result;
+      renderLibraryReport();
+      const c = result.counts || {};
+      showAlert(
+        els.libAlert,
+        `${dryRun ? "Dry run" : "Apply"} complete — moved ${c.moved || 0}, dupes ${
+          c.deleted_dupe || 0
+        }, failed ${c.failed || 0}.`,
+        "ok"
+      );
+    } catch (err) {
+      showAlert(els.libAlert, err.message, "error");
+    } finally {
+      els.libDryRunBtn.disabled = false;
+      els.libApplyBtn.disabled = !(lastImportResult && lastImportResult.dry_run);
+    }
+  }
+
+  // --- Search ---
   function renderSearchResults(results) {
     if (!results.length) {
       els.searchResults.hidden = true;
@@ -639,12 +845,14 @@
         if (result.error) {
           return `<div class="track-group"><p class="track-group-title">${escapeHtml(
             result.query
-          )}</p><div class="error-text">${escapeHtml(result.error)}</div></div>`;
+          )}</p><div class="error-text" style="padding:0.5rem 0.9rem">${escapeHtml(
+            result.error
+          )}</div></div>`;
         }
         if (!result.candidates.length) {
           return `<div class="track-group"><p class="track-group-title">${escapeHtml(
             result.query
-          )}</p><div class="error-text">No matches</div></div>`;
+          )}</p><div class="error-text" style="padding:0.5rem 0.9rem">No matches</div></div>`;
         }
         const options = result.candidates
           .map((c, ci) => {
@@ -654,11 +862,7 @@
                 <input type="radio" name="q${qi}" value="${escapeHtml(c.url)}" data-title="${escapeHtml(
               c.title
             )}" ${checked} />
-                <span>
-                  ${ci + 1}. ${escapeHtml(c.channel || "Unknown").toUpperCase()} - ${escapeHtml(
-              c.title
-            ).toUpperCase()}
-                </span>
+                <span>${escapeHtml(c.channel || "Unknown")} — ${escapeHtml(c.title)}</span>
                 <span class="meta">${formatDuration(c.duration)}</span>
               </label>
             `;
@@ -666,11 +870,40 @@
           .join("");
         return `<div class="track-group"><p class="track-group-title">${escapeHtml(
           result.query
-        ).toUpperCase()}</p>${options}</div>`;
+        )}</p>${options}</div>`;
       })
       .join("");
     els.searchDownloadBtn.disabled = false;
   }
+
+  els.searchBtn.addEventListener("click", async () => {
+    const lines = els.searchInput.value
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    if (!lines.length) {
+      showAlert(els.searchAlert, "Enter at least one song.", "error");
+      return;
+    }
+    els.searchBtn.disabled = true;
+    showAlert(els.searchAlert, `Searching ${lines.length}…`, "info");
+    try {
+      const data = await api("/api/search", {
+        method: "POST",
+        body: JSON.stringify({
+          queries: lines,
+          limit: settings.searchResultCount,
+          ...authPayload(),
+        }),
+      });
+      renderSearchResults(data.results);
+      showAlert(els.searchAlert, "Pick a match for each song, then download.", "ok");
+    } catch (err) {
+      showAlert(els.searchAlert, err.message, "error");
+    } finally {
+      els.searchBtn.disabled = false;
+    }
+  });
 
   els.searchDownloadBtn.addEventListener("click", async () => {
     const groups = [...els.searchResults.querySelectorAll(".track-group")];
@@ -681,83 +914,83 @@
         items.push({ url: selected.value, title: selected.dataset.title || null });
       }
     });
-    await startDownload(items, null, "Search download");
+    await startDownload(items, null, "Search download", els.searchAlert);
   });
 
+  // --- Link ---
   els.linkDownloadBtn.addEventListener("click", async () => {
     const url = els.linkInput.value.trim();
     if (!url) {
-      setLcd("PASTE A URL FIRST");
+      showAlert(els.linkAlert, "Paste a URL first.", "error");
       return;
     }
-    await startDownload([{ url }], null, "Link download");
+    await startDownload([{ url }], null, "Link download", els.linkAlert);
   });
 
-  els.playlistLoadBtn.addEventListener("click", async () => {
-    const url = els.playlistInput.value.trim();
-    if (!url) {
-      setLcd("PASTE A PLAYLIST URL");
-      return;
-    }
-    els.playlistLoadBtn.disabled = true;
-    setLcd("LOADING PLAYLIST…");
-    try {
-      const data = await api("/api/playlist", {
-        method: "POST",
-        body: JSON.stringify({ url, ...authPayload() }),
-      });
-      loadedPlaylist = data;
-      renderPlaylist(data);
-      setLcd(`PLAYLIST · ${data.entries.length} TRACKS`);
-    } catch (err) {
-      setLcd(`PLAYLIST ERROR · ${err.message}`);
-    } finally {
-      els.playlistLoadBtn.disabled = false;
-    }
-  });
-
-  function renderPlaylist(data) {
-    els.playlistTitle.hidden = false;
-    els.playlistTitle.textContent = data.title;
-    els.playlistResults.hidden = false;
-    els.playlistResults.innerHTML = data.entries
+  // --- Playlist one-shot download ---
+  function renderPlaylistDl(data) {
+    loadedPlaylist = data;
+    els.plDlTitle.hidden = false;
+    els.plDlTitle.textContent = data.title;
+    els.plDlResults.hidden = false;
+    els.plDlResults.innerHTML = data.entries
       .map(
         (entry, i) => `
       <label class="track-row">
-        <input type="checkbox" name="pl" value="${escapeHtml(entry.url)}" data-title="${escapeHtml(
+        <input type="checkbox" name="pldl" value="${escapeHtml(entry.url)}" data-title="${escapeHtml(
           entry.title
         )}" checked />
-        <span>
-          ${i + 1}. ${escapeHtml(entry.channel || "UNKNOWN").toUpperCase()} - ${escapeHtml(
-          entry.title
-        ).toUpperCase()}
-        </span>
+        <span>${i + 1}. ${escapeHtml(entry.channel || "Unknown")} — ${escapeHtml(entry.title)}</span>
         <span class="meta">${formatDuration(entry.duration)}</span>
       </label>
     `
       )
       .join("");
-    els.playlistSelectAllBtn.disabled = false;
-    els.playlistSelectNoneBtn.disabled = false;
-    els.playlistDownloadBtn.disabled = false;
+    els.plDlSelectAllBtn.disabled = false;
+    els.plDlSelectNoneBtn.disabled = false;
+    els.plDlDownloadBtn.disabled = false;
   }
 
-  els.playlistSelectAllBtn.addEventListener("click", () => {
-    els.playlistResults.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+  els.plDlLoadBtn.addEventListener("click", async () => {
+    const url = els.plDlInput.value.trim();
+    if (!url) {
+      showAlert(els.plDlAlert, "Paste a playlist URL.", "error");
+      return;
+    }
+    els.plDlLoadBtn.disabled = true;
+    showAlert(els.plDlAlert, "Loading playlist…", "info");
+    try {
+      const data = await api("/api/playlist", {
+        method: "POST",
+        body: JSON.stringify({ url, ...authPayload() }),
+      });
+      renderPlaylistDl(data);
+      showAlert(
+        els.plDlAlert,
+        `Loaded ${data.entries.length} tracks. Select and download — this playlist is not saved for sync.`,
+        "ok"
+      );
+    } catch (err) {
+      showAlert(els.plDlAlert, err.message, "error");
+    } finally {
+      els.plDlLoadBtn.disabled = false;
+    }
+  });
+
+  els.plDlSelectAllBtn.addEventListener("click", () => {
+    els.plDlResults.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
       cb.checked = true;
     });
   });
-
-  els.playlistSelectNoneBtn.addEventListener("click", () => {
-    els.playlistResults.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+  els.plDlSelectNoneBtn.addEventListener("click", () => {
+    els.plDlResults.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
       cb.checked = false;
     });
   });
-
-  els.playlistDownloadBtn.addEventListener("click", async () => {
-    const checked = [...els.playlistResults.querySelectorAll('input[type="checkbox"]:checked')];
+  els.plDlDownloadBtn.addEventListener("click", async () => {
+    const checked = [...els.plDlResults.querySelectorAll('input[type="checkbox"]:checked')];
     if (!checked.length) {
-      setLcd("CHECK AT LEAST ONE TRACK");
+      showAlert(els.plDlAlert, "Select at least one track.", "error");
       return;
     }
     const items = checked.map((cb) => ({
@@ -766,10 +999,92 @@
     }));
     const subdir =
       settings.playlistSubfolder && loadedPlaylist ? loadedPlaylist.title : null;
-    await startDownload(items, subdir, loadedPlaylist?.title || "Playlist");
+    await startDownload(items, subdir, loadedPlaylist?.title || "Playlist", els.plDlAlert);
   });
 
-  // --- Folder / file browser ---
+  // --- Sync ---
+  els.syncAddBtn.addEventListener("click", async () => {
+    const url = els.syncAddInput.value.trim();
+    if (!url) {
+      showAlert(els.syncAlert, "Paste a playlist URL to save.", "error");
+      return;
+    }
+    els.syncAddBtn.disabled = true;
+    showAlert(els.syncAlert, "Saving playlist…", "info");
+    try {
+      await api("/api/playlists", {
+        method: "POST",
+        body: JSON.stringify({ url, ...authPayload() }),
+      });
+      els.syncAddInput.value = "";
+      await refreshPlaylists();
+      refreshHomeBadges();
+      showAlert(els.syncAlert, "Playlist saved for sync.", "ok");
+    } catch (err) {
+      showAlert(els.syncAlert, err.message, "error");
+    } finally {
+      els.syncAddBtn.disabled = false;
+    }
+  });
+
+  els.syncDueBtn.addEventListener("click", () => runSync({ onlyDue: true }));
+  els.syncAllBtn.addEventListener("click", () => runSync({}));
+  els.syncSelectAllBtn.addEventListener("click", () => {
+    els.syncQueueResults.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+      cb.checked = true;
+    });
+  });
+  els.syncSelectNoneBtn.addEventListener("click", () => {
+    els.syncQueueResults.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+      cb.checked = false;
+    });
+  });
+  els.syncDownloadSelectedBtn.addEventListener("click", () => downloadFromSync({ all: false }));
+  els.syncDownloadAllBtn.addEventListener("click", () => downloadFromSync({ all: true }));
+  els.syncDismissBtn.addEventListener("click", async () => {
+    const ids = [...els.syncQueueResults.querySelectorAll('input[type="checkbox"]:checked')].map(
+      (cb) => cb.value
+    );
+    try {
+      if (ids.length && ids.length < syncQueue.length) {
+        await api("/api/sync/dismiss", { method: "POST", body: JSON.stringify({ ids }) });
+      } else {
+        await api("/api/sync/dismiss", { method: "POST", body: JSON.stringify({ all: true }) });
+      }
+      await refreshSyncQueue();
+      renderSyncQueue();
+      refreshHomeBadges();
+      showAlert(els.syncAlert, "Queue updated.", "ok");
+    } catch (err) {
+      showAlert(els.syncAlert, err.message, "error");
+    }
+  });
+
+  // --- Library ---
+  els.libDryRunBtn.addEventListener("click", () => runLibraryImport(true));
+  els.libApplyBtn.addEventListener("click", () => runLibraryImport(false));
+
+  // --- Settings ---
+  els.settingsSaveBtn.addEventListener("click", async () => {
+    try {
+      await saveSettingsToServer(readSettingsForm());
+      fillSettingsForm();
+      showAlert(els.settingsAlert, "Settings saved.", "ok");
+    } catch (err) {
+      showAlert(els.settingsAlert, err.message, "error");
+    }
+  });
+  els.settingsResetBtn.addEventListener("click", async () => {
+    try {
+      await saveSettingsToServer({ ...DEFAULTS });
+      fillSettingsForm();
+      showAlert(els.settingsAlert, "Defaults restored.", "ok");
+    } catch (err) {
+      showAlert(els.settingsAlert, err.message, "error");
+    }
+  });
+
+  // --- FS browser ---
   async function loadFsRoots() {
     const data = await api("/api/fs/roots");
     fsState = { path: "", parent: null, entries: data.entries, selectedIsDir: true };
@@ -777,10 +1092,7 @@
   }
 
   async function loadFsPath(path) {
-    const q =
-      fsPickMode === "file"
-        ? `&include_files=true&file_ext=txt`
-        : "";
+    const q = fsPickMode === "file" ? `&include_files=true&file_ext=txt` : "";
     const data = await api(`/api/fs/list?path=${encodeURIComponent(path)}${q}`);
     fsState = {
       path: data.path,
@@ -795,7 +1107,7 @@
     els.fsCurrentPath.textContent = fsState.path || "Drives / roots";
     els.fsUpBtn.disabled = !fsState.path && !fsState.parent;
     if (!fsState.entries.length) {
-      els.fsList.innerHTML = `<p class="empty-hint">No entries</p>`;
+      els.fsList.innerHTML = `<p class="empty">No entries</p>`;
       return;
     }
     els.fsList.innerHTML = fsState.entries
@@ -813,7 +1125,7 @@
         try {
           await loadFsPath(btn.dataset.path);
         } catch (err) {
-          setLcd(`FS ERROR · ${err.message}`);
+          els.fsCurrentPath.textContent = err.message;
         }
       });
       btn.addEventListener("click", () => {
@@ -830,9 +1142,7 @@
     fsPickMode = mode;
     fsTarget = target;
     els.fsModal.hidden = false;
-    document.getElementById("fsTitle").textContent =
-      mode === "file" ? "SELECT COOKIES.TXT" : "SELECT FOLDER";
-    setLcd(mode === "file" ? "SELECT COOKIE FILE" : "SELECT MUSIC FOLDER");
+    $("fsTitle").textContent = mode === "file" ? "Select cookies.txt" : "Select folder";
     try {
       const current =
         target === "cookie"
@@ -844,118 +1154,66 @@
           await loadFsPath(start);
           return;
         } catch {
-          // roots
+          /* roots */
         }
       }
       await loadFsRoots();
     } catch (err) {
-      setLcd(`FS ERROR · ${err.message}`);
+      els.fsCurrentPath.textContent = err.message;
       els.fsModal.hidden = true;
     }
   }
 
   els.browseMusicDirBtn.addEventListener("click", () => openFsBrowser("dir", "music"));
   els.browseCookieBtn.addEventListener("click", () => openFsBrowser("file", "cookie"));
-
   els.fsUpBtn.addEventListener("click", async () => {
     try {
       if (fsState.parent) await loadFsPath(fsState.parent);
       else await loadFsRoots();
     } catch (err) {
-      setLcd(`FS ERROR · ${err.message}`);
+      els.fsCurrentPath.textContent = err.message;
     }
   });
-
   els.fsSelectBtn.addEventListener("click", () => {
-    if (!fsState.path) {
-      setLcd("PICK SOMETHING FIRST");
-      return;
-    }
-    if (fsPickMode === "file" && fsState.selectedIsDir !== false) {
-      setLcd("PICK A .TXT FILE");
-      return;
-    }
-    if (fsPickMode === "dir" && fsState.selectedIsDir === false) {
-      setLcd("PICK A FOLDER");
-      return;
-    }
-    if (fsTarget === "cookie") {
-      els.setCookieFile.value = fsState.path;
-      setLcd(`COOKIES · ${fsState.path}`);
-    } else {
-      els.setMusicDir.value = fsState.path;
-      setLcd(`FOLDER · ${fsState.path}`);
-    }
+    if (!fsState.path) return;
+    if (fsPickMode === "file" && fsState.selectedIsDir !== false) return;
+    if (fsPickMode === "dir" && fsState.selectedIsDir === false) return;
+    if (fsTarget === "cookie") els.setCookieFile.value = fsState.path;
+    else els.setMusicDir.value = fsState.path;
     els.fsModal.hidden = true;
   });
-
   els.fsCancelBtn.addEventListener("click", () => {
     els.fsModal.hidden = true;
-    setLcd("PICK CANCELLED");
   });
 
-  els.settingsSaveBtn.addEventListener("click", () => {
-    saveSettings(readSettingsForm());
-    fillSettingsForm();
-    syncBitrateDisplay();
-    setLcd(`1. SETTINGS SAVED <MP3 ${settings.audioBitrate}>`);
+  // --- Navigation ---
+  document.querySelectorAll(".home-card[data-go]").forEach((card) => {
+    card.addEventListener("click", () => showScreen(card.dataset.go));
   });
+  els.brandHomeBtn.addEventListener("click", () => goHome());
+  els.navHomeBtn.addEventListener("click", () => goHome());
+  els.jobsToggleBtn.addEventListener("click", () => {
+    openJobsPanel(els.jobsPanel.hidden);
+  });
+  els.jobsCloseBtn.addEventListener("click", () => openJobsPanel(false));
+  els.jobsBackdrop.addEventListener("click", () => openJobsPanel(false));
+  els.clearJobsBtn.addEventListener("click", () => clearSettledJobs());
 
-  els.settingsResetBtn.addEventListener("click", () => {
-    saveSettings({ ...DEFAULTS });
-    fillSettingsForm();
-    syncBitrateDisplay();
-    setLcd("1. SETTINGS RESET <MP3 320>");
-  });
-
-  els.modeBtns.forEach((btn) => {
-    btn.addEventListener("click", () => switchMode(btn.dataset.mode));
-  });
-
-  // --- Winamp chrome actions ---
-  els.trPrev.addEventListener("click", () => highlightJobBlock(jobFocusIndex - 1));
-  els.trNext.addEventListener("click", () => highlightJobBlock(jobFocusIndex + 1));
-  els.trPlay.addEventListener("click", () => focusJobList());
-  els.trPause.addEventListener("click", () => {
-    pollPaused = !pollPaused;
-    setLcd(pollPaused ? "POLL PAUSED" : "POLL RESUMED");
-    if (!pollPaused) ensurePolling();
-  });
-  els.trStop.addEventListener("click", () => {
-    setLcd("1. READY — MP3 320 <0:00>");
-  });
-  els.trEject.addEventListener("click", () => {
-    switchMode("link");
-    els.linkInput.focus();
-    setLcd("LINK MODE");
-  });
-
-  els.footAdd.addEventListener("click", () => {
-    switchMode("search");
-    els.searchInput.focus();
-    setLcd("SEARCH MODE");
-  });
-  els.footRem.addEventListener("click", () => clearSettledJobs());
-  els.footSel.addEventListener("click", () => selectAllPlaylist());
-  els.footMisc.addEventListener("click", () => {
-    switchMode("settings");
-    setLcd("EQ / SETTINGS");
-  });
-  els.footListOpts.addEventListener("click", () => {
-    switchMode("settings");
-    setLcd("LIST OPTS → EQ");
-  });
-
-  function wireChrome(minBtn, focusBtn, readyBtn) {
-    minBtn?.addEventListener("click", () => togglePanels());
-    focusBtn?.addEventListener("click", () => focusJobList());
-    readyBtn?.addEventListener("click", () => setLcd("1. READY — MP3 320 <0:00>"));
+  async function boot() {
+    showScreen("home");
+    try {
+      await migrateLocalStorageIfNeeded();
+      await loadSettingsFromServer();
+      fillSettingsForm();
+      await refreshPlaylists();
+      await refreshSyncQueue();
+      await refreshHomeBadges();
+      updateJobsChrome();
+    } catch (err) {
+      fillSettingsForm();
+      console.warn("Boot warning", err);
+    }
   }
-  wireChrome(els.winMinBtn, els.winFocusBtn, els.winReadyBtn);
-  wireChrome(els.plWinMinBtn, els.plWinFocusBtn, els.plWinReadyBtn);
 
-  fillSettingsForm();
-  syncBitrateDisplay();
-  startVisualizer();
-  setLcd("1. READY — MP3 320 <0:00>");
+  boot();
 })();
